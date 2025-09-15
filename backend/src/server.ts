@@ -172,7 +172,7 @@ async function handleClaudeConversationWithStreaming(
   let conversationMessages = [...messages];
   let fullResponse = "";
   let conversationRound = 1;
-  const maxRounds = 10;
+  const maxRounds = 15;
 
   try {
     while (conversationRound <= maxRounds) {

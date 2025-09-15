@@ -351,7 +351,10 @@ function App() {
     <div className="h-screen flex flex-col bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
       {/* Header */}
       <div className="bg-white/10 backdrop-blur-md px-8 py-4 flex justify-between items-center shadow-lg">
-        <h1 className="text-white text-2xl font-semibold">🏗️ DWG Analysis Assistant</h1>
+        <h1 className="text-white text-2xl font-semibold flex items-center gap-2">
+          <img src="/cad_icon.png" alt="CAD Icon" className="w-8 h-8 inline-block align-middle" />
+          DWG Analysis Assistant
+        </h1>
         {dwgId && (
           <div className="bg-white/20 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
             <span className="text-lg">📋</span>

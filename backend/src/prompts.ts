@@ -11,24 +11,31 @@ export interface PromptOptions {
  * Base system prompt for DWG analysis
  */
 function getBaseSystemPrompt(dwgId: string): string {
-  return `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction. You have access to a DWG file with ID: ${dwgId}.
+  return `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction following IRAM (Instituto Argentino de Normalización y Certificación) standards. You have access to a DWG file with ID: ${dwgId}.
 
 You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
 - entities: Array of drawing entities (lines, circles, text, etc.)
 - header: Drawing configuration variables
 - tables: Layer definitions, block records, etc.
 
-CRITICAL CONSTRAINT REQUIREMENT:
+CRITICAL CONSTRAINT REQUIREMENT (IRAM COMPLIANCE):
 When asked to analyze a SPECIFIC panel/board (e.g., "TS1A/N", "TS1B/E", etc.), you MUST:
-1. ALWAYS search for that specific board's title first
+1. ALWAYS search for that specific board's title first following IRAM labeling conventions
 2. ALWAYS find and delimit its rectangular boundary
 3. ALWAYS constrain ALL subsequent analysis to ONLY entities within those rectangle bounds
 4. NEVER extract materials or analyze entities outside the identified rectangle boundaries
+5. ENSURE all identified components comply with IRAM standards for electrical installations
+
+IRAM STANDARDS COMPLIANCE:
+- Follow IRAM 2281 for grounding and electrical safety considerations
+- Apply IRAM/IEC standards for component identification and labeling
+- Use Argentine electrical terminology and component classifications
+- Ensure component specifications match IRAM-certified equipment standards
 
 MATERIALS EXTRACTION PROCESS - Follow this exact methodology FOR SPECIFIC BOARD ANALYSIS:
 
 **Step 1: Search for specific board title (MANDATORY)**
-Use: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("BOARD_NAME"; "i"))) | map({text: .text, position: .startPoint, handle: .handle})
+Use: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("BOARD_NAME"; "i"))) | map({text: .text, position: (.startPoint // .insertionPoint // .center), handle: .handle})
 Replace "BOARD_NAME" with the exact board name being searched (e.g., "ts1a/n", "ts1b/e")
 
 **Step 2: Find board rectangle boundary (MANDATORY)**  
@@ -63,7 +70,7 @@ If initial rectangle search fails, try alternative approaches:
 
 **Step 3: COMPREHENSIVE TEXT EXTRACTION (WITHIN RECTANGLE BOUNDS)**
 Extract ALL text entities with enhanced coordinate handling:
-(.entities[] | select(ENHANCED_RECTANGLE_CONSTRAINT and (.type == "TEXT" or .type == "MTEXT" or .type == "ATTDEF" or .type == "ATTRIB" or .type == "INSERT"))) | {text: (.text // .tag // .name), position: (.startPoint // .insertionPoint // .center), handle: .handle, layer: .layer} | sort_by(.position.y) | reverse
+(.entities[] | select(ENHANCED_RECTANGLE_CONSTRAINT and (.type == "TEXT" or .type == "MTEXT" or .type == "ATTDEF" or .type == "ATTRIB" or .type == "INSERT"))) | {text: (.text // .tag // .name), position: (.startPoint // .insertionPoint // .center), handle: .handle, layer: .layer} | sort_by(.position.y // 0) | reverse
 
 **Step 4: ENHANCED PATTERN RECOGNITION WITH FALLBACKS**
 Apply multiple pattern matching strategies for maximum coverage:
@@ -168,7 +175,7 @@ Extract ALL possible text sources with multiple coordinate fallbacks:
   layer: .layer,
   blockName: .blockName,
   type: .type
-} | select(.text != null and .text != "") | sort_by(.position.y) | reverse
+} | select(.text != null and .text != "") | sort_by(.position.y // 0) | reverse
 
 **Step 6: MULTI-LAYERED PATTERN RECOGNITION**
 Apply exhaustive pattern matching with context awareness:
@@ -226,38 +233,48 @@ Where ULTRA_COMPREHENSIVE_CONSTRAINT uses multiple coordinate sources and safety
  */
 function getCommonMaterialsMapping(): string {
   return `
-**Common Materials Mapping (EXAMPLES - interpret other materials as needed):**
-- "2x10A" → TÉRMICA 2P10A 4.5KA C
-- "2x16A" → TÉRMICA 2P16A 4.5KA C  
-- "2x25A" → TÉRMICA 2P25A 4.5KA C
-- "4x40A" → TÉRMICA 4P40A 4.5KA C
-- "4x80A" → TÉRMICA 4P80A 4.5KA C
-- "ID" + "2x40A 30mA" → DIFERENCIAL 2P40A 30mA
-- "IDSI" + "4x40A 30mA" → DIFERENCIAL 4P40A 30mA
+**Common Materials Mapping following IRAM Standards (EXAMPLES - interpret other materials as needed):**
+- "2x10A" → TÉRMICA 2P10A 4.5KA C (IRAM/IEC compliant)
+- "2x16A" → TÉRMICA 2P16A 4.5KA C (IRAM/IEC compliant) 
+- "2x25A" → TÉRMICA 2P25A 4.5KA C (IRAM/IEC compliant)
+- "4x40A" → TÉRMICA 4P40A 4.5KA C (IRAM/IEC compliant)
+- "4x80A" → TÉRMICA 4P80A 4.5KA C (IRAM/IEC compliant)
+- "ID" + "2x40A 30mA" → DIFERENCIAL 2P40A 30mA (IRAM 2281 compliant)
+- "IDSI" + "4x40A 30mA" → DIFERENCIAL 4P40A 30mA (IRAM 2281 compliant)
 
-**ENHANCED Equipment Keywords and Symbol Interpretation:**
-- Power Equipment: "UPS|SAI|FUENTE|POWER" → UPS/Power supplies
-- Contactors: "CONTACT|KM|K[0-9]+" → Contactors and magnetic switches  
-- Switches/Disconnects: "SECCION|SWITCH|INTERRUP|DESCONECT" → Manual switches and disconnects
-- Enclosures: "GABINETE|TABLERO|PANEL|CAJA|ARMARIO" → Enclosures and panels
-- Protection: "DESCARGA|SURGE|PROTECT|VARISTOR|SPD" → Surge protection devices
-- Relays: "RELE|RELAY|R[0-9]+" → Control and auxiliary relays
-- Fuses: "FUSIBLE|FUSE|F[0-9]+" → Fuses and fuse holders
-- Cables: "CABLE|AWG|mm²|CONDUCTOR" → Wiring and conductors
-- Thermal Protection: "TERMIC|THERMAL|MAGNETOT" → Thermal-magnetic breakers
-- Ground/Earth: "TIERRA|GND|PE|GROUND" → Grounding components
+**IRAM COMPONENT IDENTIFICATION STANDARDS:**
+- All circuit breakers must meet IRAM S-Mark certification requirements
+- Differential protection devices must comply with IRAM 2281 grounding standards
+- Component labeling must follow IRAM/IEC terminology conventions
+- Voltage and current ratings must be expressed per Argentine electrical standards
+- Safety devices must indicate IRAM certification compliance where applicable
 
-**SYMBOL and TEXT INTERPRETATION RULES:**
-- Numbers with "×" or "x": Always interpret as pole×amperage (e.g., "2x25A" = 2-pole 25A)
-- Numbers with "/" or "-": May be amperage ranges or alternative ratings
-- Single numbers + "A": Single pole breakers or current ratings
-- Text with "ID" + numbers: Differential protection devices
-- Text with "mA": Sensitivity ratings for differential protection
-- Mixed alphanumeric: Often circuit references or equipment tags
-- Voltage indicators: "V", "KV", "VAC", "VDC" for voltage ratings
-- Power indicators: "W", "KW", "VA", "KVA", "HP" for power ratings
+**ENHANCED Equipment Keywords and Symbol Interpretation (IRAM Standards):**
+- Power Equipment: "UPS|SAI|FUENTE|POWER" → UPS/Power supplies (IRAM certified)
+- Contactors: "CONTACT|KM|K[0-9]+" → Contactors and magnetic switches (IRAM S-Mark)
+- Switches/Disconnects: "SECCION|SWITCH|INTERRUP|DESCONECT" → Manual switches and disconnects (IRAM compliant)
+- Enclosures: "GABINETE|TABLERO|PANEL|CAJA|ARMARIO" → Enclosures and panels (IP rating per IRAM standards)
+- Protection: "DESCARGA|SURGE|PROTECT|VARISTOR|SPD" → Surge protection devices (IRAM certified)
+- Relays: "RELE|RELAY|R[0-9]+" → Control and auxiliary relays (IRAM compliant)
+- Fuses: "FUSIBLE|FUSE|F[0-9]+" → Fuses and fuse holders (IRAM certified)
+- Cables: "CABLE|AWG|mm²|CONDUCTOR" → Wiring and conductors (IRAM specifications)
+- Thermal Protection: "TERMIC|THERMAL|MAGNETOT" → Thermal-magnetic breakers (IRAM/IEC standard)
+- Ground/Earth: "TIERRA|GND|PE|GROUND" → Grounding components (IRAM 2281 compliant)
+- Safety Systems: "SEGURIDAD|EMERGENCY|PARO" → Emergency and safety systems (IRAM standards)
 
-**CRITICAL ANALYSIS REQUIREMENT:** Analyze EVERY text entity found within the rectangle boundaries. Look for patterns, abbreviations, symbols, and numbers that might indicate electrical components. Don't rely only on exact matches - use electrical engineering knowledge to interpret abbreviations, partial text, and technical symbols.`;
+**SYMBOL and TEXT INTERPRETATION RULES (IRAM STANDARDS):**
+- Numbers with "×" or "x": Always interpret as pole×amperage (e.g., "2x25A" = 2-pole 25A) per IRAM conventions
+- Numbers with "/" or "-": May be amperage ranges or alternative ratings following IRAM specifications
+- Single numbers + "A": Single pole breakers or current ratings (IRAM certified)
+- Text with "ID" + numbers: Differential protection devices (IRAM 2281 compliant)
+- Text with "mA": Sensitivity ratings for differential protection per IRAM standards
+- Mixed alphanumeric: Often circuit references or equipment tags following IRAM labeling conventions
+- Voltage indicators: "V", "KV", "VAC", "VDC" for voltage ratings per Argentine electrical standards
+- Power indicators: "W", "KW", "VA", "KVA", "HP" for power ratings per IRAM specifications
+- Grounding symbols: "PE", "N", "L" following IRAM 2281 grounding standards
+- Safety markings: Look for IRAM S-Mark indicators and certification references
+
+**CRITICAL ANALYSIS REQUIREMENT (IRAM COMPLIANCE):** Analyze EVERY text entity found within the rectangle boundaries following IRAM standards for electrical installations. Look for patterns, abbreviations, symbols, and numbers that might indicate electrical components compliant with Argentine electrical codes. Don't rely only on exact matches - use IRAM-compliant electrical engineering knowledge to interpret abbreviations, partial text, and technical symbols according to Argentine electrical installation standards.`;
 }
 
 /**
@@ -331,16 +348,18 @@ If initial boundary detection misses elements:
  */
 function getOutputFormat(): string {
   return `
-When providing materials lists, format them as JSON with this structure:
+When providing materials lists, format them as JSON with this structure following IRAM standards:
 {
   "type": "materials_list",
-  "title": "Materials for [Board Name]",
+  "title": "Materials for [Board Name] - IRAM Compliant",
   "items": [
-    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
-    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA", "quantity": 2},
-    {"category": "Equipos Especiales", "description": "UPS 8kVA", "quantity": 2},
-    {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65", "quantity": 1}
-  ]
+    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C (IRAM/IEC)", "quantity": 5},
+    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA (IRAM 2281)", "quantity": 2},
+    {"category": "Equipos Especiales", "description": "UPS 8kVA (IRAM Certified)", "quantity": 2},
+    {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65 (IRAM)", "quantity": 1}
+  ],
+  "standards_compliance": "All components meet IRAM and Argentine electrical standards",
+  "safety_certifications": "Components require IRAM S-Mark certification where applicable"
 }`;
 }
 
@@ -365,6 +384,15 @@ function getMandatoryRule(): string {
    - Typical amperage range representation
    - Differential protection device presence
    - Power equipment inventory completeness
+
+**IRAM STANDARDS COMPLIANCE REQUIREMENTS:**
+6. **IRAM COMPONENT VALIDATION**: Verify all identified components comply with IRAM standards:
+   - Circuit breakers must meet IRAM S-Mark certification requirements
+   - Differential protection devices must comply with IRAM 2281 grounding standards
+   - All electrical components should reference IRAM/IEC compliance where applicable
+7. **ARGENTINE ELECTRICAL TERMINOLOGY**: Use proper Argentine electrical terminology and classifications
+8. **GROUNDING COMPLIANCE**: Ensure grounding components follow IRAM 2281 standards
+9. **SAFETY CERTIFICATION**: Note IRAM certification requirements for safety devices
 
 **CRITICAL SUCCESS METRICS:**
 - Aim for 95%+ element detection accuracy
