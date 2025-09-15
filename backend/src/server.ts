@@ -140,7 +140,7 @@ async function executeDwgQuery(dwgId: string, query: string): Promise<string> {
   }
 }
 
-// Improved Claude conversation handler with proper streaming and tool management
+// Simpler but more reliable Claude conversation handler
 async function handleClaudeConversation(
   messages: any[], 
   systemMessage: string,
@@ -164,170 +164,95 @@ async function handleClaudeConversation(
     },
   ];
 
+  console.log(`🚀 Starting Claude conversation for DWG: ${dwgId}`);
+  
+  let conversationMessages = [...messages];
+  let fullResponse = "";
+  let conversationRound = 1;
+  const maxRounds = 10; // Prevent infinite loops
+
   try {
-    console.log(`🚀 Starting Claude conversation for DWG: ${dwgId}`);
-    
-    // Initial API call to Claude
-    const stream = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 8000,
-      system: systemMessage,
-      messages,
-      tools,
-      stream: true,
-    });
+    while (conversationRound <= maxRounds) {
+      console.log(`🔄 Conversation round ${conversationRound}`);
+      
+      // Make API call to Claude
+      const response = await anthropic.messages.create({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 8000,
+        system: systemMessage,
+        messages: conversationMessages,
+        tools
+      });
 
-    let assistantMessage = "";
-    let toolCalls: any[] = [];
-    let currentToolCall: any = null;
-    let currentToolInput = "";
+      // Extract text and tool calls from response
+      const textBlocks = response.content.filter(block => block.type === 'text');
+      const toolUseBlocks = response.content.filter(block => block.type === 'tool_use');
+      
+      const responseText = textBlocks.map(block => block.text).join('');
+      fullResponse += (fullResponse ? '\n\n' : '') + responseText;
+      
+      console.log(`📝 Claude response (round ${conversationRound}): "${responseText.substring(0, 200)}..."`);
+      console.log(`🔧 Tool calls in this round: ${toolUseBlocks.length}`);
 
-    // Process streaming response
-    for await (const event of stream) {
-      if (event.type === 'content_block_start') {
-        console.log(`📝 Content block started: ${event.content_block.type}`);
-        if (event.content_block.type === 'tool_use') {
-          currentToolCall = {
-            id: event.content_block.id,
-            name: event.content_block.name,
-            input: ""
-          };
-          console.log(`🔧 Tool call started: ${event.content_block.name} (ID: ${event.content_block.id})`);
-        }
-      } 
-      else if (event.type === 'content_block_delta') {
-        if (event.delta.type === 'text_delta') {
-          // Regular text response
-          assistantMessage += event.delta.text;
-          console.log(`📝 Text delta: "${event.delta.text}"`);
-        } 
-        else if (event.delta.type === 'input_json_delta') {
-          // Tool input being streamed
-          currentToolInput += event.delta.partial_json;
-          console.log(`🔧 Tool input delta: "${event.delta.partial_json}"`);
-        }
-      } 
-      else if (event.type === 'content_block_stop') {
-        console.log(`✅ Content block finished`);
+      // If Claude wants to use tools, execute them and continue conversation
+      if (toolUseBlocks.length > 0) {
+        console.log(`⚡ Executing ${toolUseBlocks.length} tool call(s)`);
         
-        if (currentToolCall && currentToolInput) {
-          try {
-            currentToolCall.input = JSON.parse(currentToolInput);
-            toolCalls.push(currentToolCall);
-            console.log(`🔧 Tool call completed: ${currentToolCall.name}`, JSON.stringify(currentToolCall.input, null, 2));
-            
-            // Reset for next tool call
-            currentToolCall = null;
-            currentToolInput = "";
-          } catch (e) {
-            console.error(`❌ Failed to parse tool input: "${currentToolInput}"`);
+        const toolResults = [];
+        
+        for (const toolBlock of toolUseBlocks) {
+          if (toolBlock.name === 'query_dwg') {
+            console.log(`🔍 Executing query: ${(toolBlock.input as any).query}`);
+            const result = await executeDwgQuery(dwgId, (toolBlock.input as any).query);
+            toolResults.push({
+              type: 'tool_result' as const,
+              tool_use_id: toolBlock.id,
+              content: result,
+            });
+            console.log(`✅ Query result: ${result.substring(0, 100)}...`);
           }
         }
-      }
-      else if (event.type === 'message_delta') {
-        console.log(`🏁 Message delta: stop_reason = ${event.delta.stop_reason}`);
-        if (event.delta.stop_reason === 'tool_use') {
-          console.log(`🛑 Message stopped for tool use - will continue with tool execution`);
-          break;
-        } else if (event.delta.stop_reason === 'end_turn') {
-          console.log(`🛑 Message ended normally`);
-          break;
-        }
-      }
-      else if (event.type === 'message_stop') {
-        console.log(`🛑 Message stopped completely`);
+
+        // Add assistant message and tool results to conversation
+        conversationMessages.push({
+          role: 'assistant' as const,
+          content: response.content
+        });
+        
+        conversationMessages.push({
+          role: 'user' as const,
+          content: toolResults
+        });
+
+        conversationRound++;
+        console.log(`➡️  Continuing to round ${conversationRound} with tool results`);
+        
+      } else {
+        // No tools used, Claude has finished
+        console.log(`✅ Claude finished conversation after ${conversationRound} rounds`);
+        console.log(`📊 Final response length: ${fullResponse.length} characters`);
         break;
       }
     }
 
-    // Execute tool calls if any
-    if (toolCalls.length > 0) {
-      console.log(`⚡ Executing ${toolCalls.length} tool call(s)`);
-      
-      const toolResults = [];
-      
-      for (const toolCall of toolCalls) {
-        if (toolCall.name === 'query_dwg') {
-          const result = await executeDwgQuery(dwgId, toolCall.input.query);
-          toolResults.push({
-            type: 'tool_result' as const,
-            tool_use_id: toolCall.id,
-            content: result,
-          });
-        }
-      }
-
-      // Create complete conversation with tool results
-      const completeMessages = [
-        ...messages,
-        {
-          role: 'assistant' as const,
-          content: [
-            ...(assistantMessage ? [{ type: 'text' as const, text: assistantMessage }] : []),
-            ...toolCalls.map(tc => ({
-              type: 'tool_use' as const,
-              id: tc.id,
-              name: tc.name,
-              input: tc.input
-            }))
-          ]
-        },
-        {
-          role: 'user' as const,
-          content: toolResults
-        }
-      ];
-
-      console.log('🔄 Making follow-up API call with tool results');
-      
-      // Make follow-up call to get Claude's response to the tool results
-      const finalResponse = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 8000,
-        system: systemMessage,
-        messages: completeMessages,
-        tools
-      });
-
-      // Extract final text response
-      const finalText = finalResponse.content
-        .filter(block => block.type === 'text')
-        .map(block => block.text)
-        .join('');
-
-      const fullResponse = assistantMessage + "\n\n" + finalText;
-      
-      // Check for materials data
-      let materialsData = null;
-      try {
-        const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
-        if (jsonMatch) {
-          materialsData = JSON.parse(jsonMatch[0]);
-          console.log('📋 Materials list extracted:', materialsData);
-        }
-      } catch (error) {
-        console.log('ℹ️  No materials list found in response');
-      }
-
-      console.log('✅ Claude conversation completed successfully');
-      return { response: fullResponse, materialsData };
-    
-    } else {
-      // No tool calls, return direct response
-      console.log('💬 Direct response (no tools used)');
-      
-      let materialsData = null;
-      try {
-        const jsonMatch = assistantMessage.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
-        if (jsonMatch) {
-          materialsData = JSON.parse(jsonMatch[0]);
-        }
-      } catch (error) {
-        // No materials data
-      }
-
-      return { response: assistantMessage, materialsData };
+    if (conversationRound > maxRounds) {
+      console.warn(`⚠️  Conversation hit max rounds (${maxRounds}), stopping`);
     }
+
+    // Check for materials data
+    let materialsData = null;
+    try {
+      const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
+      if (jsonMatch) {
+        materialsData = JSON.parse(jsonMatch[0]);
+        console.log('📋 Materials list extracted:', materialsData);
+      }
+    } catch (error) {
+      console.log('ℹ️  No materials list found in response');
+    }
+
+    console.log('🎉 Claude conversation completed successfully');
+    return { response: fullResponse, materialsData };
 
   } catch (error: any) {
     console.error('❌ Claude conversation error:', error);
