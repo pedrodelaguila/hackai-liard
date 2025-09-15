@@ -6,6 +6,7 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
+import { getDwgAnalysisSystemMessage } from './prompts.js';
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -180,7 +181,7 @@ async function handleClaudeConversationWithStreaming(
       
       // Make API call to Claude
       const response = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 8000,
         system: systemMessage,
         messages: conversationMessages,
@@ -443,40 +444,10 @@ app.post('/chat/basic', upload.single('dwg'), async (req, res) => {
     }
 
     // System message with improved query strategy to avoid token limits
-    const systemMessage = `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction. You have access to a DWG file with ID: ${dwgId}.
-
-CRITICAL: To avoid token limits, use FOCUSED queries that return only essential information. Do NOT query for all entities at once.
-
-STRATEGY FOR MATERIALS EXTRACTION:
-
-**Step 1: Quick entity count**
-Use: [.entities | length]
-
-**Step 2: Find specific text patterns (use selective filters)**
-- For amperages: .entities[] | select(.type == "TEXT" or .type == "MTEXT") | select(.text | test("[0-9]+[xX][0-9]+A")) | .text
-- For differentials: .entities[] | select(.type == "TEXT" or .type == "MTEXT") | select(.text | test("ID[SsIi]*[0-9]")) | .text  
-- For board names: .entities[] | select(.type == "TEXT" or .type == "MTEXT") | select(.text | test("[Tt][Ss][0-9]+")) | .text
-
-**Step 3: Extract material quantities**
-Count unique occurrences of each pattern found.
-
-**IMPORTANT CONSTRAINTS:**
-- Use | .text instead of full objects to minimize token usage
-- Query for specific patterns, not all entities
-- Limit results with | .[0:20] if needed
-- Focus on extracting materials data, not analyzing entire drawing
-
-When providing materials lists, format as JSON:
-{
-  "type": "materials_list",
-  "title": "Materials for Panel Analysis", 
-  "items": [
-    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
-    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA", "quantity": 2}
-  ]
-}
-
-ALWAYS use focused, selective queries to stay within token limits.`;
+    const systemMessage = getDwgAnalysisSystemMessage({ 
+      dwgId, 
+      tokenOptimized: true 
+    });
 
     const messages = [
       {
@@ -541,62 +512,7 @@ app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
     }
 
     // Prepare system message with DWG context
-    const systemMessage = `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction. You have access to a DWG file with ID: ${dwgId}.
-
-You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
-- entities: Array of drawing entities (lines, circles, text, etc.)
-- header: Drawing configuration variables  
-- tables: Layer definitions, block records, etc.
-
-MATERIALS EXTRACTION PROCESS - Follow this exact methodology:
-
-**Step 1: Search for title text**
-Use: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TITULO"; "i"))) | map({text: .text, position: .startPoint, handle: .handle})
-Replace "TITULO" with the board name being searched (e.g., "ts1a/n", "ts1b/e")
-
-**Step 2: Find board rectangle boundary**  
-After finding the board title position, find the rectangular boundary around it:
-Use: .entities | map(select(.type == "LWPOLYLINE" and (.vertices | length) == 4)) | map(select( (.vertices[0].x - $refX | if . < 0 then -. else . end) < 5000 and (.vertices[0].y - $refY | if . < 0 then -. else . end) < 5000 )) | map({ handle: .handle, bounds: { minX: ([.vertices[].x] | min), maxX: ([.vertices[].x] | max), minY: ([.vertices[].y] | min), maxY: ([.vertices[].y] | max) } })
-Replace $refX and $refY with the actual coordinates found in step 1.
-
-**Step 3: Extract entities within rectangle bounds**
-Use: .entities[] | select(((.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) >= \$minX and (.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) <= \$maxX and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) >= \$minY and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) <= \$maxY))
-
-**Step 4: Extract material specifications**
-- Amperages: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("[0-9]+x[0-9]+A"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Differential IDs: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("ID[0-9]+|IDSI[0-9]+"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Circuits: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TS[0-9]+[A-Z]+-[A-Z]+[0-9]*"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-
-**Common Materials Mapping (EXAMPLES - interpret other materials as needed):**
-- "2x10A" → TÉRMICA 2P10A 4.5KA C
-- "2x16A" → TÉRMICA 2P16A 4.5KA C  
-- "2x25A" → TÉRMICA 2P25A 4.5KA C
-- "4x40A" → TÉRMICA 4P40A 4.5KA C
-- "4x80A" → TÉRMICA 4P80A 4.5KA C
-- "ID" + "2x40A 30mA" → DIFERENCIAL 2P40A 30mA
-- "IDSI" + "4x40A 30mA" → DIFERENCIAL 4P40A 30mA
-
-**Equipment Keywords (EXAMPLES - look for other equipment types):**
-- "UPS" → UPS equipment
-- "SECCIONADOR" → Manual load disconnect switches
-- "GABINETE" → Enclosures
-- "DESCARGADOR" → Surge arresters
-
-**IMPORTANT:** The above are just EXAMPLES. Analyze all text found in the panel and interpret ANY electrical components, ratings, equipment, or materials mentioned. Use your expertise to categorize and quantify all materials present.
-
-When providing materials lists, format them as JSON with this structure:
-{
-  "type": "materials_list", 
-  "title": "Materials for [Board Name]",
-  "items": [
-    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
-    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA", "quantity": 2},
-    {"category": "Equipos Especiales", "description": "UPS 8kVA", "quantity": 2},
-    {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65", "quantity": 1}
-  ]
-}
-
-ALWAYS use the query_dwg tool to analyze the DWG data. Be thorough and methodical in your analysis.`;
+    const systemMessage = getDwgAnalysisSystemMessage({ dwgId });
 
     const messages = [
       {
@@ -646,60 +562,7 @@ app.post('/chat', upload.single('dwg'), async (req, res) => {
     }
 
     // Prepare system message with DWG context
-    const systemMessage = `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction. You have access to a DWG file with ID: ${dwgId}.
-
-You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
-- entities: Array of drawing entities (lines, circles, text, etc.)
-- header: Drawing configuration variables
-- tables: Layer definitions, block records, etc.
-
-MATERIALS EXTRACTION PROCESS - Follow this exact methodology:
-
-**Step 1: Search for title text**
-Use: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TITULO"; "i"))) | map({text: .text, position: .startPoint, handle: .handle})
-Replace "TITULO" with the board name being searched (e.g., "ts1a/n", "ts1b/e")
-
-**Step 2: Find the rectangle boundary**
-Use: .entities | map(select(.type == "LWPOLYLINE" and (.vertices | length) == 4)) | map(select( (.vertices[0].x - \$refX | if . < 0 then -. else . end) < 3000 and (.vertices[0].y - \$refY | if . < 0 then -. else . end) < 3000 )) | map({ handle: .handle, firstVertex: .vertices[0], bounds: { minX: ([.vertices[].x] | min), maxX: ([.vertices[].x] | max), minY: ([.vertices[].y] | min), maxY: ([.vertices[].y] | max) } })
-
-**Step 3: Extract entities within rectangle bounds**
-Use: .entities[] | select(((.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) >= \$minX and (.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) <= \$maxX and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) >= \$minY and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) <= \$maxY))
-
-**Step 4: Extract material specifications**
-- Amperages: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("[0-9]+x[0-9]+A"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Differential IDs: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("ID[0-9]+|IDSI[0-9]+"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Circuits: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TS[0-9]+[A-Z]+-[A-Z]+[0-9]*"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-
-**Common Materials Mapping (EXAMPLES - interpret other materials as needed):**
-- "2x10A" → TÉRMICA 2P10A 4.5KA C
-- "2x16A" → TÉRMICA 2P16A 4.5KA C
-- "2x25A" → TÉRMICA 2P25A 4.5KA C
-- "4x40A" → TÉRMICA 4P40A 4.5KA C
-- "4x80A" → TÉRMICA 4P80A 4.5KA C
-- "ID" + "2x40A 30mA" → DIFERENCIAL 2P40A 30mA
-- "IDSI" + "4x40A 30mA" → DIFERENCIAL 4P40A 30mA
-
-**Equipment Keywords (EXAMPLES - look for other equipment types):**
-- "UPS" → UPS equipment
-- "SECCIONADOR" → Manual load disconnect switches
-- "GABINETE" → Enclosures
-- "DESCARGADOR" → Surge arresters
-
-**IMPORTANT:** The above are just EXAMPLES. Analyze all text found in the panel and interpret ANY electrical components, ratings, equipment, or materials mentioned. Use your expertise to categorize and quantify all materials present.
-
-When providing materials lists, format them as JSON with this structure (this is an EXAMPLE - adapt categories and items based on what you find):
-{
-  "type": "materials_list",
-  "title": "Materials for [board name]",
-  "items": [
-    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
-    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA", "quantity": 2},
-    {"category": "Equipos Especiales", "description": "UPS 8kVA", "quantity": 2},
-    {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65", "quantity": 1}
-  ]
-}
-
-ALWAYS use the query_dwg tool to analyze the DWG data. Be thorough and methodical in your analysis.`;
+    const systemMessage = getDwgAnalysisSystemMessage({ dwgId });
 
     const messages = [
       {
