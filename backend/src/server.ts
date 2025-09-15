@@ -1,10 +1,9 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { Anthropic } from '@anthropic-ai/sdk';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { spawn } from 'child_process';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
 
@@ -39,28 +38,55 @@ let mcpClient: Client | null = null;
 // Initialize MCP client connection to dwg-parser
 async function initializeMCPClient(): Promise<void> {
   try {
-    // Start the MCP server process
-    const mcpProcess = spawn('npm', ['run', 'mcp'], {
-      cwd: '../dwg-parser',
-      stdio: ['pipe', 'pipe', 'inherit'],
-      shell: true
-    });
-
-    const transport = new StdioClientTransport({
-      command: mcpProcess,
-    });
-
-    mcpClient = new Client({
-      name: 'dwg-analysis-backend',
-      version: '1.0.0',
-    }, {
-      capabilities: {
-        tools: {},
-      },
-    });
-
-    await mcpClient.connect(transport);
-    console.log('Connected to DWG Parser MCP Server');
+    // Try connecting to the MCP server running on the DWG parser HTTP server (port 3000)
+    // Instead of spawning a new process, we'll communicate with the existing one
+    console.log('Attempting to connect to MCP server via HTTP bridge...');
+    
+    // For now, we'll create a mock client that communicates via HTTP to the DWG parser
+    // This is a temporary solution until we properly set up stdio communication
+    mcpClient = {
+      callTool: async (params: any) => {
+        // Mock implementation that calls the HTTP server's functionality
+        const { name, arguments: args } = params;
+        
+        if (name === 'query_dwg') {
+          try {
+            // Make HTTP request to DWG parser to execute jq query
+            const response = await fetch(`${DWG_PARSER_URL}/query`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: args.id,
+                query: args.query
+              })
+            });
+            
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const result = await response.text();
+            return {
+              content: [{
+                type: 'text',
+                text: result
+              }]
+            };
+          } catch (error: any) {
+            return {
+              content: [{
+                type: 'text', 
+                text: `Error executing query: ${error.message}`
+              }]
+            };
+          }
+        }
+        
+        throw new Error(`Unknown tool: ${name}`);
+      }
+    } as any;
+    
+    console.log('Connected to DWG Parser via HTTP bridge');
   } catch (error) {
     console.error('Failed to initialize MCP client:', error);
   }
@@ -95,22 +121,233 @@ async function queryDwg(id: string, query: string): Promise<string> {
     arguments: { id, query },
   });
 
-  if (result.content?.[0]?.type === 'text') {
-    return result.content[0].text;
+  if ((result.content as any)?.[0]?.type === 'text') {
+    return (result.content as any)[0].text;
   }
 
   throw new Error('Invalid response from MCP server');
 }
 
-// Chat endpoint
+// Helper function to execute DWG queries
+async function executeDwgQuery(dwgId: string, query: string): Promise<string> {
+  try {
+    const queryResult = await queryDwg(dwgId, query);
+    console.log(`✅ Query executed successfully: ${query}`);
+    return queryResult;
+  } catch (error: any) {
+    console.error(`❌ Query failed: ${query}`, error);
+    return `Error: ${error.message}`;
+  }
+}
+
+// Improved Claude conversation handler with proper streaming and tool management
+async function handleClaudeConversation(
+  messages: any[], 
+  systemMessage: string,
+  dwgId: string
+): Promise<{ response: string; materialsData: any }> {
+  
+  const tools = [
+    {
+      name: 'query_dwg',
+      description: 'Execute a jq query on the loaded DWG file to extract specific information',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          query: {
+            type: 'string' as const,
+            description: 'jq query string to execute on the DWG JSON data',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  ];
+
+  try {
+    console.log(`🚀 Starting Claude conversation for DWG: ${dwgId}`);
+    
+    // Initial API call to Claude
+    const stream = await anthropic.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 8000,
+      system: systemMessage,
+      messages,
+      tools,
+      stream: true,
+    });
+
+    let assistantMessage = "";
+    let toolCalls: any[] = [];
+    let currentToolCall: any = null;
+    let currentToolInput = "";
+
+    // Process streaming response
+    for await (const event of stream) {
+      if (event.type === 'content_block_start') {
+        console.log(`📝 Content block started: ${event.content_block.type}`);
+        if (event.content_block.type === 'tool_use') {
+          currentToolCall = {
+            id: event.content_block.id,
+            name: event.content_block.name,
+            input: ""
+          };
+          console.log(`🔧 Tool call started: ${event.content_block.name} (ID: ${event.content_block.id})`);
+        }
+      } 
+      else if (event.type === 'content_block_delta') {
+        if (event.delta.type === 'text_delta') {
+          // Regular text response
+          assistantMessage += event.delta.text;
+          console.log(`📝 Text delta: "${event.delta.text}"`);
+        } 
+        else if (event.delta.type === 'input_json_delta') {
+          // Tool input being streamed
+          currentToolInput += event.delta.partial_json;
+          console.log(`🔧 Tool input delta: "${event.delta.partial_json}"`);
+        }
+      } 
+      else if (event.type === 'content_block_stop') {
+        console.log(`✅ Content block finished`);
+        
+        if (currentToolCall && currentToolInput) {
+          try {
+            currentToolCall.input = JSON.parse(currentToolInput);
+            toolCalls.push(currentToolCall);
+            console.log(`🔧 Tool call completed: ${currentToolCall.name}`, JSON.stringify(currentToolCall.input, null, 2));
+            
+            // Reset for next tool call
+            currentToolCall = null;
+            currentToolInput = "";
+          } catch (e) {
+            console.error(`❌ Failed to parse tool input: "${currentToolInput}"`);
+          }
+        }
+      }
+      else if (event.type === 'message_delta') {
+        console.log(`🏁 Message delta: stop_reason = ${event.delta.stop_reason}`);
+        if (event.delta.stop_reason === 'tool_use') {
+          console.log(`🛑 Message stopped for tool use - will continue with tool execution`);
+          break;
+        } else if (event.delta.stop_reason === 'end_turn') {
+          console.log(`🛑 Message ended normally`);
+          break;
+        }
+      }
+      else if (event.type === 'message_stop') {
+        console.log(`🛑 Message stopped completely`);
+        break;
+      }
+    }
+
+    // Execute tool calls if any
+    if (toolCalls.length > 0) {
+      console.log(`⚡ Executing ${toolCalls.length} tool call(s)`);
+      
+      const toolResults = [];
+      
+      for (const toolCall of toolCalls) {
+        if (toolCall.name === 'query_dwg') {
+          const result = await executeDwgQuery(dwgId, toolCall.input.query);
+          toolResults.push({
+            type: 'tool_result' as const,
+            tool_use_id: toolCall.id,
+            content: result,
+          });
+        }
+      }
+
+      // Create complete conversation with tool results
+      const completeMessages = [
+        ...messages,
+        {
+          role: 'assistant' as const,
+          content: [
+            ...(assistantMessage ? [{ type: 'text' as const, text: assistantMessage }] : []),
+            ...toolCalls.map(tc => ({
+              type: 'tool_use' as const,
+              id: tc.id,
+              name: tc.name,
+              input: tc.input
+            }))
+          ]
+        },
+        {
+          role: 'user' as const,
+          content: toolResults
+        }
+      ];
+
+      console.log('🔄 Making follow-up API call with tool results');
+      
+      // Make follow-up call to get Claude's response to the tool results
+      const finalResponse = await anthropic.messages.create({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 8000,
+        system: systemMessage,
+        messages: completeMessages,
+        tools
+      });
+
+      // Extract final text response
+      const finalText = finalResponse.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('');
+
+      const fullResponse = assistantMessage + "\n\n" + finalText;
+      
+      // Check for materials data
+      let materialsData = null;
+      try {
+        const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
+        if (jsonMatch) {
+          materialsData = JSON.parse(jsonMatch[0]);
+          console.log('📋 Materials list extracted:', materialsData);
+        }
+      } catch (error) {
+        console.log('ℹ️  No materials list found in response');
+      }
+
+      console.log('✅ Claude conversation completed successfully');
+      return { response: fullResponse, materialsData };
+    
+    } else {
+      // No tool calls, return direct response
+      console.log('💬 Direct response (no tools used)');
+      
+      let materialsData = null;
+      try {
+        const jsonMatch = assistantMessage.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
+        if (jsonMatch) {
+          materialsData = JSON.parse(jsonMatch[0]);
+        }
+      } catch (error) {
+        // No materials data
+      }
+
+      return { response: assistantMessage, materialsData };
+    }
+
+  } catch (error: any) {
+    console.error('❌ Claude conversation error:', error);
+    throw new Error(`Claude conversation failed: ${error.message}`);
+  }
+}
+
+// Chat endpoint - supports both text and file uploads  
 app.post('/chat', upload.single('dwg'), async (req, res) => {
   try {
     const { message, dwgId: existingDwgId } = req.body;
     let dwgId = existingDwgId;
 
+    console.log(`📨 New chat request: ${message?.substring(0, 100)}...`);
+
     // If a DWG file is uploaded, process it first
     if (req.file) {
+      console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
       dwgId = await uploadDwgFile(req.file.buffer, req.file.originalname);
+      console.log(`✅ DWG uploaded with ID: ${dwgId}`);
     }
 
     if (!dwgId) {
@@ -122,7 +359,7 @@ app.post('/chat', upload.single('dwg'), async (req, res) => {
 
 You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
 - entities: Array of drawing entities (lines, circles, text, etc.)
-- header: Drawing configuration variables
+- header: Drawing configuration variables  
 - tables: Layer definitions, block records, etc.
 
 MATERIALS EXTRACTION PROCESS - Follow this exact methodology:
@@ -131,7 +368,7 @@ MATERIALS EXTRACTION PROCESS - Follow this exact methodology:
 Use: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TITULO"; "i"))) | map({text: .text, position: .startPoint, handle: .handle})
 Replace "TITULO" with the board name being searched (e.g., "ts1a/n", "ts1b/e")
 
-**Step 2: Find the rectangle boundary**
+**Step 2: Find the rectangle boundary**  
 Use: .entities | map(select(.type == "LWPOLYLINE" and (.vertices | length) == 4)) | map(select( (.vertices[0].x - \$refX | if . < 0 then -. else . end) < 3000 and (.vertices[0].y - \$refY | if . < 0 then -. else . end) < 3000 )) | map({ handle: .handle, firstVertex: .vertices[0], bounds: { minX: ([.vertices[].x] | min), maxX: ([.vertices[].x] | max), minY: ([.vertices[].y] | min), maxY: ([.vertices[].y] | max) } })
 
 **Step 3: Extract entities within rectangle bounds**
@@ -144,7 +381,7 @@ Use: .entities[] | select(((.startPoint.x // .center.x // .insertionPoint.x // (
 
 **Common Materials Mapping (EXAMPLES - interpret other materials as needed):**
 - "2x10A" → TÉRMICA 2P10A 4.5KA C
-- "2x16A" → TÉRMICA 2P16A 4.5KA C
+- "2x16A" → TÉRMICA 2P16A 4.5KA C  
 - "2x25A" → TÉRMICA 2P25A 4.5KA C
 - "4x40A" → TÉRMICA 4P40A 4.5KA C
 - "4x80A" → TÉRMICA 4P80A 4.5KA C
@@ -161,7 +398,7 @@ Use: .entities[] | select(((.startPoint.x // .center.x // .insertionPoint.x // (
 
 When providing materials lists, format them as JSON with this structure (this is an EXAMPLE - adapt categories and items based on what you find):
 {
-  "type": "materials_list",
+  "type": "materials_list", 
   "title": "Materials for [board name]",
   "items": [
     {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
@@ -169,111 +406,30 @@ When providing materials lists, format them as JSON with this structure (this is
     {"category": "Equipos Especiales", "description": "UPS 8kVA", "quantity": 2},
     {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65", "quantity": 1}
   ]
-}`;
+}
 
-    // Call Claude with the message and system context
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 4000,
-      system: systemMessage,
-      messages: [
-        {
-          role: 'user',
-          content: message,
-        },
-      ],
-      tools: [
-        {
-          name: 'query_dwg',
-          description: 'Execute a jq query on the loaded DWG file',
-          input_schema: {
-            type: 'object',
-            properties: {
-              query: {
-                type: 'string',
-                description: 'jq query string to execute on the DWG JSON data',
-              },
-            },
-            required: ['query'],
-          },
-        },
-      ],
-    });
+ALWAYS use the query_dwg tool to analyze the DWG data. Be thorough and methodical in your analysis.`;
 
-    // Process tool calls if any
-    let finalResponse = response;
-    if (response.content.some(block => block.type === 'tool_use')) {
-      const toolResults = [];
+    const messages = [
+      {
+        role: 'user' as const,
+        content: message,
+      },
+    ];
 
-      for (const block of response.content) {
-        if (block.type === 'tool_use' && block.name === 'query_dwg') {
-          try {
-            const queryResult = await queryDwg(dwgId, block.input.query as string);
-            toolResults.push({
-              type: 'tool_result' as const,
-              tool_use_id: block.id,
-              content: queryResult,
-            });
-          } catch (error: any) {
-            toolResults.push({
-              type: 'tool_result' as const,
-              tool_use_id: block.id,
-              content: `Error: ${error.message}`,
-              is_error: true,
-            });
-          }
-        }
-      }
+    // Use the improved conversation handler
+    const result = await handleClaudeConversation(messages, systemMessage, dwgId);
 
-      // Continue conversation with tool results
-      if (toolResults.length > 0) {
-        finalResponse = await anthropic.messages.create({
-          model: 'claude-3-5-sonnet-20241022',
-          max_tokens: 4000,
-          system: systemMessage,
-          messages: [
-            {
-              role: 'user',
-              content: message,
-            },
-            {
-              role: 'assistant',
-              content: response.content,
-            },
-            {
-              role: 'user',
-              content: toolResults,
-            },
-          ],
-        });
-      }
-    }
-
-    // Extract text content
-    const textContent = finalResponse.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('');
-
-    // Check if response contains a materials list
-    let materialsData = null;
-    try {
-      const jsonMatch = textContent.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
-      if (jsonMatch) {
-        materialsData = JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      // Not a materials list, continue normally
-    }
-
+    console.log('✅ Chat request completed successfully');
+    
     res.json({
-      response: textContent,
+      response: result.response,
       dwgId,
-      materialsData,
+      materialsData: result.materialsData,
     });
 
   } catch (error: any) {
-    console.error('Chat error:', error);
+    console.error('❌ Chat endpoint error:', error);
     res.status(500).json({ error: error.message });
   }
 });
