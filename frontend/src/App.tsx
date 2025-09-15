@@ -18,7 +18,20 @@ interface ChatMessage {
   content: string;
   materialsData?: MaterialsData;
   timestamp: Date;
+  isStreaming?: boolean;
+  roundInfo?: {
+    round: number;
+    totalRounds?: number;
+    status: 'thinking' | 'executing' | 'completed';
+    toolInfo?: string;
+  };
 }
+
+interface StreamUpdate {
+  type: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
+ }
 
 const BACKEND_URL = 'http://localhost:4000';
 
@@ -28,6 +41,7 @@ function App() {
   const [dwgFile, setDwgFile] = useState<File | null>(null);
   const [dwgId, setDwgId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingMessage, setStreamingMessage] = useState<ChatMessage | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,6 +65,16 @@ function App() {
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
+    // Initialize streaming message
+    const initialStreamingMessage: ChatMessage = {
+      role: 'assistant',
+      content: 'Initializing analysis...',
+      timestamp: new Date(),
+      isStreaming: true,
+      roundInfo: { round: 0, status: 'thinking' as const }
+    };
+    setStreamingMessage(initialStreamingMessage);
+
     try {
       const formData = new FormData();
       formData.append('message', currentMessage);
@@ -61,7 +85,8 @@ function App() {
         formData.append('dwgId', dwgId);
       }
 
-      const response = await fetch(`${BACKEND_URL}/chat`, {
+      // Use the streaming endpoint
+      const response = await fetch(`${BACKEND_URL}/chat/stream`, {
         method: 'POST',
         body: formData,
       });
@@ -70,19 +95,33 @@ function App() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
+      // Handle Server-Sent Events
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: data.response,
-        materialsData: data.materialsData,
-        timestamp: new Date(),
-      };
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) break;
 
-      setMessages(prev => [...prev, assistantMessage]);
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-      if (data.dwgId) {
-        setDwgId(data.dwgId);
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const update: StreamUpdate = JSON.parse(line.slice(6));
+                handleStreamUpdate(update);
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              } catch (e) {
+                console.warn('Failed to parse stream update:', line);
+              }
+            }
+          }
+        }
       }
 
       setCurrentMessage('');
@@ -101,6 +140,151 @@ function App() {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
+      setStreamingMessage(null);
+    }
+  };
+
+  const handleStreamUpdate = (update: StreamUpdate) => {
+    console.log('Stream update:', update.type, update.data);
+
+    switch (update.type) {
+      case 'status':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+          roundInfo: { round: 0, status: 'thinking' as const }
+        } : null);
+        break;
+
+      case 'dwg_uploaded':
+        setDwgId(update.data.dwgId);
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+        } : null);
+        break;
+
+      case 'analysis_started':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+        } : null);
+        break;
+
+      case 'round_started':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: `Round ${update.data.round}: Claude is thinking...`,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'thinking' as const 
+          }
+        } : null);
+        break;
+
+      case 'round_response':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.text,
+          roundInfo: { 
+            round: update.data.round, 
+            status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const,
+            toolInfo: update.data.toolCount > 0 ? `Preparing ${update.data.toolCount} ${update.data.toolCount === 1 ? 'query' : 'queries'}` : undefined
+          }
+        } : null);
+        break;
+
+      case 'tools_executing':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: prev.content + '\n\n🔍 ' + update.data.message,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'executing' as const,
+            toolInfo: update.data.message
+          }
+        } : null);
+        break;
+
+      case 'tool_executing':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'executing' as const,
+            toolInfo: update.data.message
+          }
+        } : null);
+        break;
+
+      case 'tool_completed':
+        // Just update the tool info, don't change content
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'executing' as const,
+            toolInfo: `Query ${update.data.toolIndex} completed`
+          }
+        } : null);
+        break;
+
+      case 'round_completed':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'thinking' as const,
+            toolInfo: 'Preparing next round...'
+          }
+        } : null);
+        break;
+
+      case 'conversation_finished':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.totalRounds, 
+            status: 'completed' as const,
+            totalRounds: update.data.totalRounds,
+            toolInfo: `Analysis completed in ${update.data.totalRounds} rounds`
+          }
+        } : null);
+        break;
+
+      case 'materials_extracted':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          materialsData: update.data.materialsData
+        } : null);
+        break;
+
+      case 'analysis_complete':
+        // Finalize the streaming message and add it to messages
+        const finalMessage: ChatMessage = {
+          role: 'assistant',
+          content: update.data.response,
+          materialsData: update.data.materialsData,
+          timestamp: new Date(),
+          isStreaming: false
+        };
+        setMessages(prev => [...prev, finalMessage]);
+        setStreamingMessage(null);
+        
+        if (update.data.dwgId) {
+          setDwgId(update.data.dwgId);
+        }
+        break;
+
+      case 'error':
+        const errorMessage: ChatMessage = {
+          role: 'assistant',
+          content: `Error: ${update.data.error}`,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        setStreamingMessage(null);
+        break;
     }
   };
 
@@ -237,6 +421,56 @@ function App() {
               </div>
             </div>
           ))}
+
+          {streamingMessage && (
+            <div className="self-start bg-blue-50 border-2 border-blue-200 text-gray-800 p-4 rounded-xl max-w-4xl">
+              <div className="flex justify-between items-center text-sm opacity-75 mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">🤖 Assistant</span>
+                  {streamingMessage.roundInfo && (
+                    <span className="bg-blue-100 px-2 py-1 rounded-full text-xs">
+                      {streamingMessage.roundInfo.status === 'thinking' && '🤔 Thinking'}
+                      {streamingMessage.roundInfo.status === 'executing' && '⚡ Querying'}
+                      {streamingMessage.roundInfo.status === 'completed' && '✅ Complete'}
+                      {streamingMessage.roundInfo.round > 0 && ` - Round ${streamingMessage.roundInfo.round}`}
+                      {streamingMessage.roundInfo.totalRounds && `/${streamingMessage.roundInfo.totalRounds}`}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs">
+                  {streamingMessage.timestamp.toLocaleTimeString()}
+                </span>
+              </div>
+              
+              {streamingMessage.roundInfo?.toolInfo && (
+                <div className="bg-blue-100 p-2 rounded text-sm mb-3 text-blue-800">
+                  🔍 {streamingMessage.roundInfo.toolInfo}
+                </div>
+              )}
+              
+              <div className="leading-relaxed">
+                {streamingMessage.materialsData ? (
+                  <>
+                    <div className="mb-4">
+                      {streamingMessage.content.replace(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/, '').trim()}
+                    </div>
+                    {renderMaterialsList(streamingMessage.materialsData)}
+                  </>
+                ) : (
+                  <div>
+                    {streamingMessage.content.split('\n').map((line, i) => (
+                      <p key={i} className="mb-2 last:mb-0">{line}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-200">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                <span className="text-xs text-blue-600">Claude is analyzing...</span>
+              </div>
+            </div>
+          )}
 
           {isLoading && (
             <div className="self-start bg-gray-50 border text-gray-800 p-4 rounded-xl max-w-4xl">
