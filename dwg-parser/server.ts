@@ -7,6 +7,7 @@ import swaggerUi from "swagger-ui-express";
 import swaggerJsdoc from "swagger-jsdoc";
 import { storeDwgData } from "./mcp-server.js";
 import { randomUUID } from "node:crypto";
+import * as jq from "node-jq";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -125,19 +126,88 @@ function countInsertNames(root: any) {
   return Object.fromEntries(counts);
 }
 
+// LibreDwg error code meanings for better debugging
+const DWG_ERROR_CODES: { [key: number]: string } = {
+  1: "DWG_ERR_INVALIDINPUT - Invalid input data",
+  2: "DWG_ERR_IOERROR - Input/output error", 
+  3: "DWG_ERR_OUTOFMEMORY - Out of memory",
+  4: "DWG_ERR_INTERNALERROR - Internal error",
+  5: "DWG_ERR_INVALIDDWG - Invalid DWG file",
+  6: "DWG_ERR_INCOMPATIBLEVERSION - Incompatible DWG version",
+  7: "DWG_ERR_NOTYETSUPPORTED - Feature not yet supported",
+  8: "DWG_ERR_UNHANDLEDCLASS - Unhandled object class",
+  9: "DWG_ERR_INVALIDTYPE - Invalid object type",
+  10: "DWG_ERR_INVALIDHANDLE - Invalid handle reference",
+  84: "DWG_ERR_VALUEOUTOFBOUNDS - Non-fatal warning: Some features unsupported but parsing continues"
+};
+
+// Fatal error codes that should stop processing
+const FATAL_ERROR_CODES = [1, 2, 3, 4, 5, 6];
+
+// Non-fatal warning codes that allow parsing to continue
+const WARNING_CODES = [84];
+
 async function parseDwgBufferToDb(buffer: Buffer) {
-  const libredwg = await LibreDwg.create(wasmDir);
-  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
-  const dwg: any = libredwg.dwg_read_data(arrayBuffer, Dwg_File_Type.DWG);
-  if (dwg && typeof dwg.error === "number" && dwg.error !== 0) {
-    libredwg.dwg_free?.(dwg);
-    const err = new Error("Failed to open DWG file") as any;
-    err.code = dwg.error;
-    throw err;
+  let libredwg;
+  let dwg: any = null;
+  
+  try {
+    console.log(`Attempting to parse DWG file (${buffer.length} bytes)`);
+    
+    // Initialize LibreDwg
+    libredwg = await LibreDwg.create(wasmDir);
+    console.log("LibreDwg initialized successfully");
+    
+    // Convert buffer to ArrayBuffer
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+    console.log(`Converting ${arrayBuffer.byteLength} bytes to DWG data structure`);
+    
+    // Read DWG data
+    dwg = libredwg.dwg_read_data(arrayBuffer, Dwg_File_Type.DWG);
+    
+    if (dwg && typeof dwg.error === "number" && dwg.error !== 0) {
+      const errorMessage = DWG_ERROR_CODES[dwg.error] || `Unknown LibreDwg error code: ${dwg.error}`;
+      
+      if (FATAL_ERROR_CODES.includes(dwg.error)) {
+        console.error(`DWG parsing failed with FATAL error ${dwg.error}: ${errorMessage}`);
+        libredwg.dwg_free?.(dwg);
+        const err = new Error(`Failed to parse DWG file: ${errorMessage}`) as any;
+        err.code = dwg.error;
+        throw err;
+      } else if (WARNING_CODES.includes(dwg.error)) {
+        console.warn(`DWG parsing warning ${dwg.error}: ${errorMessage} - Continuing with parsing...`);
+        // Continue processing despite warning
+      } else {
+        console.warn(`DWG parsing unknown error ${dwg.error}: ${errorMessage} - Attempting to continue...`);
+        // Try to continue processing for unknown error codes
+      }
+    }
+    
+    if (!dwg) {
+      throw new Error("LibreDwg returned null/undefined - file may be corrupted or unsupported");
+    }
+    
+    console.log("DWG data structure created successfully, converting to database format");
+    
+    // Convert to database format
+    const db = libredwg.convert(dwg);
+    
+    if (dwg) {
+      libredwg.dwg_free(dwg);
+    }
+    
+    console.log(`DWG conversion completed. Entities found: ${Array.isArray(db.entities) ? db.entities.length : 'unknown'}`);
+    return db;
+    
+  } catch (error: any) {
+    // Clean up resources
+    if (dwg && libredwg?.dwg_free) {
+      libredwg.dwg_free(dwg);
+    }
+    
+    console.error("Error in parseDwgBufferToDb:", error);
+    throw error;
   }
-  const db = libredwg.convert(dwg);
-  libredwg.dwg_free(dwg);
-  return db;
 }
 
 /**
@@ -335,8 +405,163 @@ app.post("/upload/store", upload.single("dwgfile"), async (req: Request, res: Re
   }
 });
 
+/**
+ * @swagger
+ * /debug/dwg-info:
+ *   post:
+ *     summary: "Get detailed information about a DWG file without full parsing"
+ *     description: "Uploads a DWG file and returns basic information to help debug parsing issues"
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               dwgfile:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Basic DWG file information.
+ *       400:
+ *         description: No file uploaded or analysis failed.
+ */
+app.post("/debug/dwg-info", upload.single("dwgfile"), async (req: Request, res: Response) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const buffer = req.file.buffer;
+    const info: any = {
+      filename: req.file.originalname,
+      fileSize: buffer.length,
+      fileSizeKB: Math.round(buffer.length / 1024),
+      wasmDirectory: wasmDir
+    };
+
+    // Check first few bytes for DWG signature
+    const header = buffer.subarray(0, Math.min(buffer.length, 16));
+    info.headerHex = Array.from(header).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    
+    // DWG files should start with "AC" followed by version
+    if (buffer.length >= 6) {
+      const signature = buffer.toString('ascii', 0, 2);
+      const version = buffer.toString('ascii', 2, 6);
+      info.signature = signature;
+      info.version = version;
+      info.isValidDWG = signature === 'AC';
+      
+      if (info.isValidDWG) {
+        const versionMappings: { [key: string]: string } = {
+          '1015': 'AutoCAD 2000/2001/2002',
+          '1018': 'AutoCAD 2004/2005/2006',
+          '1021': 'AutoCAD 2007/2008/2009',
+          '1024': 'AutoCAD 2010/2011/2012',
+          '1027': 'AutoCAD 2013/2014',
+          '1032': 'AutoCAD 2018/2019/2020/2021/2022'
+        };
+        info.versionDescription = versionMappings[version] || `Unknown version: ${version}`;
+      }
+    }
+
+    // Try to initialize LibreDwg to check WASM availability
+    try {
+      const libredwg = await LibreDwg.create(wasmDir);
+      info.libredwgStatus = "OK - WASM loaded successfully";
+      
+      // Try basic parsing without conversion
+      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+      const dwg: any = libredwg.dwg_read_data(arrayBuffer, Dwg_File_Type.DWG);
+      
+      if (dwg && typeof dwg.error === "number") {
+        info.parsingError = dwg.error;
+        info.parsingErrorMessage = DWG_ERROR_CODES[dwg.error] || `Unknown error ${dwg.error}`;
+        info.parsingStatus = dwg.error === 0 ? "SUCCESS" : "FAILED";
+        
+        libredwg.dwg_free?.(dwg);
+      } else {
+        info.parsingStatus = dwg ? "SUCCESS" : "FAILED - No DWG object returned";
+      }
+    } catch (wasmError: any) {
+      info.libredwgStatus = `ERROR - ${wasmError.message}`;
+      info.wasmError = wasmError.toString();
+    }
+
+    return res.json(info);
+  } catch (error: any) {
+    console.error("Error in debug endpoint:", error);
+    return res.status(500).json({ 
+      error: "Analysis failed", 
+      details: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /query:
+ *   post:
+ *     summary: "Execute a jq query on a stored DWG file"
+ *     description: "Bridge endpoint to execute MCP server queries via HTTP"
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               id:
+ *                 type: string
+ *                 description: ID of the stored DWG file
+ *               query:
+ *                 type: string
+ *                 description: jq query to execute
+ *             required: [id, query]
+ *     responses:
+ *       200:
+ *         description: Query result as text.
+ *       400:
+ *         description: Invalid request or DWG not found.
+ *       500:
+ *         description: Query execution failed.
+ */
+app.post("/query", express.json(), async (req: Request, res: Response) => {
+  try {
+    const { id, query } = req.body;
+    
+    if (!id || !query) {
+      return res.status(400).json({ error: "Both 'id' and 'query' are required" });
+    }
+    
+    // Import the MCP server functions to access stored data
+    const { hasDwgData, getDwgData } = await import('./mcp-server.js');
+    
+    // Check if DWG exists
+    if (!hasDwgData(id)) {
+      return res.status(400).send(`Error: No DWG found with ID '${id}'`);
+    }
+    
+    // Get the stored DWG data
+    const dwgData = getDwgData(id);
+    const jsonString = stringifyWithBigInt(dwgData);
+    
+    // Execute jq query using the same import as MCP server
+    const result = await jq.run(query, jsonString, { input: 'string' });
+    
+    return res.send(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+  } catch (error: any) {
+    console.error("Query execution error:", error);
+    return res.status(500).send(`Error executing jq query: ${error.message}`);
+  }
+});
+
 app.listen(port, () => {
   console.log(`DWG to JSON API running at http://localhost:${port}`);
+  console.log(`API Documentation available at http://localhost:${port}/api-docs`);
+  console.log(`WASM directory: ${wasmDir}`);
 });
 
 

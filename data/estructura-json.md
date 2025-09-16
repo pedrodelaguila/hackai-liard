@@ -250,7 +250,7 @@ jq '.entities | map(select(.layer == "BASE")) | map(.type) | unique' completo.js
 ### Análisis de Bloques
 ```bash
 # Todos los bloques insertados con sus posiciones
-jq '.entities | map(select(.type == "INSERT")) | map({name: .name, position: .insertionPoint, rotation: .rotation})' completo.json
+jq '.entities | map(select(.type == "INSERT")) | map({name: .name, position: (.insertionPoint // .startPoint // .center), rotation: .rotation})' completo.json
 
 # Bloques más utilizados
 jq '.entities | map(select(.type == "INSERT")) | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(.count) | reverse | .[0:10]' completo.json
@@ -259,7 +259,7 @@ jq '.entities | map(select(.type == "INSERT")) | group_by(.name) | map({name: .[
 ### Análisis de Texto
 ```bash
 # Todos los textos del dibujo
-jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map({text: .text, layer: .layer, position: .startPoint})' completo.json
+jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map({text: .text, layer: .layer, position: (.startPoint // .insertionPoint // .center)})' completo.json
 
 # Buscar texto específico
 jq '.entities | map(select(.type == "TEXT" and (.text | contains("VISTA"))))' completo.json

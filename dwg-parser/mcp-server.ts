@@ -1,6 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import jq from "node-jq";
+import * as jq from "node-jq";
 import { z } from "zod";
 
 // Store parsed DWG files in memory with unique IDs
@@ -147,6 +147,21 @@ export function storeDwgData(id: string, data: any): void {
 // Export function to remove DWG data
 export function removeDwgData(id: string): boolean {
   return dwgStore.delete(id);
+}
+
+// Export function to get DWG data
+export function getDwgData(id: string): any | undefined {
+  return dwgStore.get(id);
+}
+
+// Export function to check if DWG exists
+export function hasDwgData(id: string): boolean {
+  return dwgStore.has(id);
+}
+
+// Export function to list all DWG IDs
+export function listDwgIds(): string[] {
+  return Array.from(dwgStore.keys());
 }
 
 async function main() {

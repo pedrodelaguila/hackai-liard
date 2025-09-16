@@ -1,4 +1,6 @@
 import React, { useState, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import './App.css';
 
 interface MaterialItem {
@@ -18,7 +20,20 @@ interface ChatMessage {
   content: string;
   materialsData?: MaterialsData;
   timestamp: Date;
+  isStreaming?: boolean;
+  roundInfo?: {
+    round: number;
+    totalRounds?: number;
+    status: 'thinking' | 'executing' | 'completed';
+    toolInfo?: string;
+  };
 }
+
+interface StreamUpdate {
+  type: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
+ }
 
 const BACKEND_URL = 'http://localhost:4000';
 
@@ -27,7 +42,9 @@ function App() {
   const [currentMessage, setCurrentMessage] = useState('');
   const [dwgFile, setDwgFile] = useState<File | null>(null);
   const [dwgId, setDwgId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingMessage, setStreamingMessage] = useState<ChatMessage | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,6 +68,16 @@ function App() {
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
+    // Initialize streaming message
+    const initialStreamingMessage: ChatMessage = {
+      role: 'assistant',
+      content: 'Initializing analysis...',
+      timestamp: new Date(),
+      isStreaming: true,
+      roundInfo: { round: 0, status: 'thinking' as const }
+    };
+    setStreamingMessage(initialStreamingMessage);
+
     try {
       const formData = new FormData();
       formData.append('message', currentMessage);
@@ -60,8 +87,13 @@ function App() {
       } else if (dwgId) {
         formData.append('dwgId', dwgId);
       }
+      
+      if (sessionId) {
+        formData.append('sessionId', sessionId);
+      }
 
-      const response = await fetch(`${BACKEND_URL}/chat`, {
+      // Use the streaming endpoint
+      const response = await fetch(`${BACKEND_URL}/chat/stream`, {
         method: 'POST',
         body: formData,
       });
@@ -70,19 +102,33 @@ function App() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
+      // Handle Server-Sent Events
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: data.response,
-        materialsData: data.materialsData,
-        timestamp: new Date(),
-      };
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) break;
 
-      setMessages(prev => [...prev, assistantMessage]);
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-      if (data.dwgId) {
-        setDwgId(data.dwgId);
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const update: StreamUpdate = JSON.parse(line.slice(6));
+                handleStreamUpdate(update);
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              } catch (e) {
+                console.warn('Failed to parse stream update:', line);
+              }
+            }
+          }
+        }
       }
 
       setCurrentMessage('');
@@ -101,10 +147,170 @@ function App() {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
+      setStreamingMessage(null);
     }
   };
 
-  const handleKeyPress = (event: React.KeyboardEvent) => {
+  const handleStreamUpdate = (update: StreamUpdate) => {
+    console.log('Stream update:', update.type, update.data);
+
+    switch (update.type) {
+      case 'status':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+          roundInfo: { round: 0, status: 'thinking' as const }
+        } : null);
+        break;
+
+      case 'dwg_uploaded':
+        setDwgId(update.data.dwgId);
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+        } : null);
+        break;
+
+      case 'analysis_started':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+        } : null);
+        break;
+
+      case 'conversation_started':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+        } : null);
+        if (update.data.sessionId) {
+          setSessionId(update.data.sessionId);
+        }
+        break;
+
+      case 'round_started':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: `Round ${update.data.round}: Claude is thinking...`,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'thinking' as const 
+          }
+        } : null);
+        break;
+
+      case 'round_response':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.text,
+          roundInfo: { 
+            round: update.data.round, 
+            status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const,
+            toolInfo: update.data.toolCount > 0 ? `Preparing ${update.data.toolCount} ${update.data.toolCount === 1 ? 'query' : 'queries'}` : undefined
+          }
+        } : null);
+        break;
+
+      case 'tools_executing':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: prev.content + '\n\n🔍 ' + update.data.message,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'executing' as const,
+            toolInfo: update.data.message
+          }
+        } : null);
+        break;
+
+      case 'tool_executing':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'executing' as const,
+            toolInfo: update.data.message
+          }
+        } : null);
+        break;
+
+      case 'tool_completed':
+        // Just update the tool info, don't change content
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'executing' as const,
+            toolInfo: `Query ${update.data.toolIndex} completed`
+          }
+        } : null);
+        break;
+
+      case 'round_completed':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.round, 
+            status: 'thinking' as const,
+            toolInfo: 'Preparing next round...'
+          }
+        } : null);
+        break;
+
+      case 'conversation_finished':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          roundInfo: { 
+            round: update.data.totalRounds, 
+            status: 'completed' as const,
+            totalRounds: update.data.totalRounds,
+            toolInfo: `Analysis completed in ${update.data.totalRounds} rounds`
+          }
+        } : null);
+        break;
+
+      case 'materials_extracted':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          materialsData: update.data.materialsData
+        } : null);
+        break;
+
+      case 'analysis_complete': {
+        // Finalize the streaming message and add it to messages
+        const finalMessage: ChatMessage = {
+          role: 'assistant',
+          content: update.data.response,
+          materialsData: update.data.materialsData,
+          timestamp: new Date(),
+          isStreaming: false
+        };
+        setMessages(prev => [...prev, finalMessage]);
+        setStreamingMessage(null);
+        
+        if (update.data.dwgId) {
+          setDwgId(update.data.dwgId);
+        }
+        if (update.data.sessionId) {
+          setSessionId(update.data.sessionId);
+        }
+        break;
+      }
+
+      case 'error': {
+        const errorMessage: ChatMessage = {
+          role: 'assistant',
+          content: `Error: ${update.data.error}`,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        setStreamingMessage(null);
+        break;
+      }
+    }
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       sendMessage();
@@ -122,23 +328,23 @@ function App() {
 
     return (
       <div className="bg-white border-2 border-red-500 rounded-lg p-6 mt-4 shadow-lg">
-        <h3 className="text-red-600 text-xl font-bold mb-4 pb-2 border-b-2 border-red-500">
+        <h3 className="text-xl font-bold mb-4 pb-2 border-b-2 border-red-500" style={{ color: '#dc2626' }}>
           {materialsData.title}
         </h3>
 
         {Object.entries(categories).map(([category, items]) => (
           <div key={category} className="mb-6">
-            <h4 className="text-slate-700 text-lg font-semibold mb-3 bg-gray-100 px-3 py-2 rounded">
+            <h4 className="text-lg font-semibold mb-3 bg-gray-100 px-3 py-2 rounded" style={{ color: '#334155' }}>
               {category}
             </h4>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-50">
-                    <th className="text-left p-3 font-semibold text-gray-700 border-b border-gray-200">
+                    <th className="text-left p-3 font-semibold border-b border-gray-200" style={{ color: '#374151' }}>
                       Descripción
                     </th>
-                    <th className="text-left p-3 font-semibold text-gray-700 border-b border-gray-200">
+                    <th className="text-left p-3 font-semibold border-b border-gray-200" style={{ color: '#374151' }}>
                       Cantidad
                     </th>
                   </tr>
@@ -146,8 +352,8 @@ function App() {
                 <tbody>
                   {items.map((item, index) => (
                     <tr key={index} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-3 border-b border-gray-100">{item.description}</td>
-                      <td className="p-3 border-b border-gray-100 font-medium">{item.quantity}</td>
+                      <td className="p-3 border-b border-gray-100" style={{ color: '#000000' }}>{item.description}</td>
+                      <td className="p-3 border-b border-gray-100 font-medium" style={{ color: '#000000' }}>{item.quantity}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -167,13 +373,24 @@ function App() {
     <div className="h-screen flex flex-col bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
       {/* Header */}
       <div className="bg-white/10 backdrop-blur-md px-8 py-4 flex justify-between items-center shadow-lg">
-        <h1 className="text-white text-2xl font-semibold">🏗️ DWG Analysis Assistant</h1>
-        {dwgId && (
-          <div className="bg-white/20 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
-            <span className="text-lg">📋</span>
-            DWG Loaded (ID: {dwgId.substring(0, 8)}...)
-          </div>
-        )}
+        <h1 className="text-white text-2xl font-semibold flex items-center gap-2">
+          <img src="/cad_icon.png" alt="CAD Icon" className="w-8 h-8 inline-block align-middle" />
+          DWG Analysis Assistant
+        </h1>
+        <div className="flex items-center gap-3">
+          {dwgId && (
+            <div className="bg-white/20 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
+              <span className="text-lg">📋</span>
+              DWG Loaded (ID: {dwgId.substring(0, 8)}...)
+            </div>
+          )}
+          {sessionId && (
+            <div className="bg-green-500/20 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
+              <span className="text-lg">💬</span>
+              Session Active
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Chat Container */}
@@ -209,7 +426,7 @@ function App() {
             <div key={index} className={`flex flex-col gap-2 p-4 rounded-xl max-w-4xl animate-fadeIn ${
               message.role === 'user'
                 ? 'self-end bg-gradient-to-r from-indigo-500 to-purple-500 text-white'
-                : 'self-start bg-gray-50 border text-gray-800'
+                : 'self-start bg-gray-800 border border-gray-600 text-white'
             }`}>
               <div className="flex justify-between items-center text-sm opacity-75">
                 <span className="font-medium">
@@ -228,15 +445,69 @@ function App() {
                     {renderMaterialsList(message.materialsData)}
                   </>
                 ) : (
-                  <div>
-                    {message.content.split('\n').map((line, i) => (
-                      <p key={i} className="mb-2 last:mb-0">{line}</p>
-                    ))}
+                  <div className={`prose prose-sm max-w-none ${
+                    message.role === 'user' 
+                      ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
+                      : 'text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20'
+                  }`}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {message.content}
+                    </ReactMarkdown>
                   </div>
                 )}
               </div>
             </div>
           ))}
+
+          {streamingMessage && (
+            <div className="self-start bg-gray-800 border-2 border-blue-400 text-white p-4 rounded-xl max-w-4xl">
+              <div className="flex justify-between items-center text-sm opacity-75 mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">🤖 Assistant</span>
+                  {streamingMessage.roundInfo && (
+                    <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs">
+                      {streamingMessage.roundInfo.status === 'thinking' && '🤔 Thinking'}
+                      {streamingMessage.roundInfo.status === 'executing' && '⚡ Querying'}
+                      {streamingMessage.roundInfo.status === 'completed' && '✅ Complete'}
+                      {streamingMessage.roundInfo.round > 0 && ` - Round ${streamingMessage.roundInfo.round}`}
+                      {streamingMessage.roundInfo.totalRounds && `/${streamingMessage.roundInfo.totalRounds}`}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs">
+                  {streamingMessage.timestamp.toLocaleTimeString()}
+                </span>
+              </div>
+              
+              {streamingMessage.roundInfo?.toolInfo && (
+                <div className="bg-blue-600 p-2 rounded text-sm mb-3 text-white">
+                  🔍 {streamingMessage.roundInfo.toolInfo}
+                </div>
+              )}
+              
+              <div className="leading-relaxed">
+                {streamingMessage.materialsData ? (
+                  <>
+                    <div className="mb-4">
+                      {streamingMessage.content.replace(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/, '').trim()}
+                    </div>
+                    {renderMaterialsList(streamingMessage.materialsData)}
+                  </>
+                ) : (
+                  <div className="prose prose-sm max-w-none text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {streamingMessage.content}
+                    </ReactMarkdown>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-400">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                <span className="text-xs text-blue-300">Claude is analyzing...</span>
+              </div>
+            </div>
+          )}
 
           {isLoading && (
             <div className="self-start bg-gray-50 border text-gray-800 p-4 rounded-xl max-w-4xl">
@@ -272,7 +543,7 @@ function App() {
             <textarea
               value={currentMessage}
               onChange={(e) => setCurrentMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyDown}
               placeholder={
                 dwgId
                   ? "Ask me about your DWG file..."
