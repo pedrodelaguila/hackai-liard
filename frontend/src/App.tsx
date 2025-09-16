@@ -1,4 +1,6 @@
 import React, { useState, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import './App.css';
 
 interface MaterialItem {
@@ -40,6 +42,7 @@ function App() {
   const [currentMessage, setCurrentMessage] = useState('');
   const [dwgFile, setDwgFile] = useState<File | null>(null);
   const [dwgId, setDwgId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<ChatMessage | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -83,6 +86,10 @@ function App() {
         formData.append('dwg', dwgFile);
       } else if (dwgId) {
         formData.append('dwgId', dwgId);
+      }
+      
+      if (sessionId) {
+        formData.append('sessionId', sessionId);
       }
 
       // Use the streaming endpoint
@@ -169,6 +176,16 @@ function App() {
           ...prev,
           content: update.data.message,
         } : null);
+        break;
+
+      case 'conversation_started':
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: update.data.message,
+        } : null);
+        if (update.data.sessionId) {
+          setSessionId(update.data.sessionId);
+        }
         break;
 
       case 'round_started':
@@ -259,7 +276,7 @@ function App() {
         } : null);
         break;
 
-      case 'analysis_complete':
+      case 'analysis_complete': {
         // Finalize the streaming message and add it to messages
         const finalMessage: ChatMessage = {
           role: 'assistant',
@@ -274,9 +291,13 @@ function App() {
         if (update.data.dwgId) {
           setDwgId(update.data.dwgId);
         }
+        if (update.data.sessionId) {
+          setSessionId(update.data.sessionId);
+        }
         break;
+      }
 
-      case 'error':
+      case 'error': {
         const errorMessage: ChatMessage = {
           role: 'assistant',
           content: `Error: ${update.data.error}`,
@@ -285,10 +306,11 @@ function App() {
         setMessages(prev => [...prev, errorMessage]);
         setStreamingMessage(null);
         break;
+      }
     }
   };
 
-  const handleKeyPress = (event: React.KeyboardEvent) => {
+  const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       sendMessage();
@@ -306,23 +328,23 @@ function App() {
 
     return (
       <div className="bg-white border-2 border-red-500 rounded-lg p-6 mt-4 shadow-lg">
-        <h3 className="text-red-600 text-xl font-bold mb-4 pb-2 border-b-2 border-red-500">
+        <h3 className="text-xl font-bold mb-4 pb-2 border-b-2 border-red-500" style={{ color: '#dc2626' }}>
           {materialsData.title}
         </h3>
 
         {Object.entries(categories).map(([category, items]) => (
           <div key={category} className="mb-6">
-            <h4 className="text-slate-700 text-lg font-semibold mb-3 bg-gray-100 px-3 py-2 rounded">
+            <h4 className="text-lg font-semibold mb-3 bg-gray-100 px-3 py-2 rounded" style={{ color: '#334155' }}>
               {category}
             </h4>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-50">
-                    <th className="text-left p-3 font-semibold text-gray-700 border-b border-gray-200">
+                    <th className="text-left p-3 font-semibold border-b border-gray-200" style={{ color: '#374151' }}>
                       Descripción
                     </th>
-                    <th className="text-left p-3 font-semibold text-gray-700 border-b border-gray-200">
+                    <th className="text-left p-3 font-semibold border-b border-gray-200" style={{ color: '#374151' }}>
                       Cantidad
                     </th>
                   </tr>
@@ -330,8 +352,8 @@ function App() {
                 <tbody>
                   {items.map((item, index) => (
                     <tr key={index} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-3 border-b border-gray-100">{item.description}</td>
-                      <td className="p-3 border-b border-gray-100 font-medium">{item.quantity}</td>
+                      <td className="p-3 border-b border-gray-100" style={{ color: '#000000' }}>{item.description}</td>
+                      <td className="p-3 border-b border-gray-100 font-medium" style={{ color: '#000000' }}>{item.quantity}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -355,12 +377,20 @@ function App() {
           <img src="/cad_icon.png" alt="CAD Icon" className="w-8 h-8 inline-block align-middle" />
           DWG Analysis Assistant
         </h1>
-        {dwgId && (
-          <div className="bg-white/20 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
-            <span className="text-lg">📋</span>
-            DWG Loaded (ID: {dwgId.substring(0, 8)}...)
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {dwgId && (
+            <div className="bg-white/20 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
+              <span className="text-lg">📋</span>
+              DWG Loaded (ID: {dwgId.substring(0, 8)}...)
+            </div>
+          )}
+          {sessionId && (
+            <div className="bg-green-500/20 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
+              <span className="text-lg">💬</span>
+              Session Active
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Chat Container */}
@@ -396,7 +426,7 @@ function App() {
             <div key={index} className={`flex flex-col gap-2 p-4 rounded-xl max-w-4xl animate-fadeIn ${
               message.role === 'user'
                 ? 'self-end bg-gradient-to-r from-indigo-500 to-purple-500 text-white'
-                : 'self-start bg-gray-50 border text-gray-800'
+                : 'self-start bg-gray-800 border border-gray-600 text-white'
             }`}>
               <div className="flex justify-between items-center text-sm opacity-75">
                 <span className="font-medium">
@@ -415,10 +445,14 @@ function App() {
                     {renderMaterialsList(message.materialsData)}
                   </>
                 ) : (
-                  <div>
-                    {message.content.split('\n').map((line, i) => (
-                      <p key={i} className="mb-2 last:mb-0">{line}</p>
-                    ))}
+                  <div className={`prose prose-sm max-w-none ${
+                    message.role === 'user' 
+                      ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
+                      : 'text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20'
+                  }`}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {message.content}
+                    </ReactMarkdown>
                   </div>
                 )}
               </div>
@@ -426,12 +460,12 @@ function App() {
           ))}
 
           {streamingMessage && (
-            <div className="self-start bg-blue-50 border-2 border-blue-200 text-gray-800 p-4 rounded-xl max-w-4xl">
+            <div className="self-start bg-gray-800 border-2 border-blue-400 text-white p-4 rounded-xl max-w-4xl">
               <div className="flex justify-between items-center text-sm opacity-75 mb-2">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">🤖 Assistant</span>
                   {streamingMessage.roundInfo && (
-                    <span className="bg-blue-100 px-2 py-1 rounded-full text-xs">
+                    <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs">
                       {streamingMessage.roundInfo.status === 'thinking' && '🤔 Thinking'}
                       {streamingMessage.roundInfo.status === 'executing' && '⚡ Querying'}
                       {streamingMessage.roundInfo.status === 'completed' && '✅ Complete'}
@@ -446,7 +480,7 @@ function App() {
               </div>
               
               {streamingMessage.roundInfo?.toolInfo && (
-                <div className="bg-blue-100 p-2 rounded text-sm mb-3 text-blue-800">
+                <div className="bg-blue-600 p-2 rounded text-sm mb-3 text-white">
                   🔍 {streamingMessage.roundInfo.toolInfo}
                 </div>
               )}
@@ -460,17 +494,17 @@ function App() {
                     {renderMaterialsList(streamingMessage.materialsData)}
                   </>
                 ) : (
-                  <div>
-                    {streamingMessage.content.split('\n').map((line, i) => (
-                      <p key={i} className="mb-2 last:mb-0">{line}</p>
-                    ))}
+                  <div className="prose prose-sm max-w-none text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {streamingMessage.content}
+                    </ReactMarkdown>
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-200">
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-400">
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-blue-600">Claude is analyzing...</span>
+                <span className="text-xs text-blue-300">Claude is analyzing...</span>
               </div>
             </div>
           )}
@@ -509,7 +543,7 @@ function App() {
             <textarea
               value={currentMessage}
               onChange={(e) => setCurrentMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyDown}
               placeholder={
                 dwgId
                   ? "Ask me about your DWG file..."
