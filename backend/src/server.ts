@@ -6,6 +6,14 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
+import { getDwgAnalysisSystemMessage } from './prompts.js';
+import { 
+  createConversationSession, 
+  addMessageToHistory, 
+  getConversationHistory, 
+  buildContextFromHistory, 
+  getSessionStats 
+} from './conversationHistory.js';
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -128,6 +136,120 @@ async function queryDwg(id: string, query: string): Promise<string> {
   throw new Error('Invalid response from MCP server');
 }
 
+// Extract final result from Claude's full response
+function extractFinalResult(fullResponse: string): string {
+  // Split into sections by double newlines
+  let paragraphs = fullResponse.split('\n\n');
+  
+  // Remove step-by-step process markers and reasoning
+  const filteredParagraphs = paragraphs.filter(paragraph => {
+    const lowerPara = paragraph.toLowerCase().trim();
+    
+    // Skip step markers and process explanations
+    if (/^\*\*paso \d+:/i.test(paragraph) ||
+        /^\*\*step \d+:/i.test(paragraph) ||
+        lowerPara.includes('voy a proceder') ||
+        lowerPara.includes('procedamos a') ||
+        lowerPara.includes('ahora voy a') ||
+        lowerPara.includes('déjame') ||
+        lowerPara.includes('let me') ||
+        lowerPara.includes('voy a buscar') ||
+        lowerPara.includes('buscar el') ||
+        lowerPara.includes('encontré el') ||
+        lowerPara.includes('he encontrado') ||
+        lowerPara.includes('perfecto!') ||
+        lowerPara.includes('excelente!') ||
+        lowerPara.includes('¡perfecto!') ||
+        lowerPara.includes('¡excelente!') ||
+        lowerPara.includes('basándome en') ||
+        lowerPara.includes('based on')) {
+      return false;
+    }
+    
+    // Skip internal reasoning
+    if (lowerPara.startsWith('i need to') || 
+        lowerPara.startsWith('i\'ll') || 
+        lowerPara.startsWith('i should') ||
+        lowerPara.startsWith('first, i') ||
+        lowerPara.startsWith('now i') ||
+        lowerPara.startsWith('te ayudo a') ||
+        lowerPara.includes('siguiendo los estándares') ||
+        lowerPara.includes('sistemáticamente')) {
+      return false;
+    }
+    
+    // Skip query explanations
+    if (lowerPara.includes('this query will') ||
+        lowerPara.includes('esta consulta') ||
+        lowerPara.includes('the query returned') ||
+        lowerPara.includes('la consulta devuelve') ||
+        lowerPara.includes('déjame simplificar')) {
+      return false;
+    }
+    
+    // Skip short paragraphs that are likely process notes
+    if (paragraph.trim().length < 20) {
+      return false;
+    }
+    
+    return true;
+  });
+  
+  // Look for final results section - usually contains JSON or summary
+  let result = '';
+  
+  // First, try to find a JSON materials list
+  const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
+  if (jsonMatch) {
+    // Extract the paragraph that contains the JSON and maybe some context
+    const jsonText = jsonMatch[0];
+    const beforeJson = fullResponse.substring(0, fullResponse.indexOf(jsonText));
+    const afterJson = fullResponse.substring(fullResponse.indexOf(jsonText) + jsonText.length);
+    
+    // Look for a summary or conclusion after the JSON
+    const summaryMatch = afterJson.match(/\*\*Resumen[\s\S]*?(?=\n\n|\n\*\*|$)/i) ||
+                        afterJson.match(/\*\*Summary[\s\S]*?(?=\n\n|\n\*\*|$)/i) ||
+                        afterJson.match(/En resumen[\s\S]*?(?=\n\n|\n\*\*|$)/i);
+    
+    result = jsonText;
+    if (summaryMatch) {
+      result += '\n\n' + summaryMatch[0];
+    }
+  } else {
+    // If no JSON, look for final summary sections
+    const summaryMatches = fullResponse.match(/\*\*Resumen[\s\S]*$/i) ||
+                          fullResponse.match(/\*\*Summary[\s\S]*$/i) ||
+                          fullResponse.match(/## Resumen[\s\S]*$/i);
+    
+    if (summaryMatches) {
+      result = summaryMatches[0];
+    } else {
+      // Fallback: use filtered paragraphs but prioritize later ones
+      if (filteredParagraphs.length > 0) {
+        // Take the last 2-3 substantial paragraphs
+        const substantialParas = filteredParagraphs.filter(p => p.trim().length > 50);
+        result = substantialParas.slice(-3).join('\n\n');
+      } else {
+        // Last resort: take the end of the response
+        const lastPart = fullResponse.split('\n\n').slice(-4).join('\n\n');
+        result = lastPart;
+      }
+    }
+  }
+  
+  // Clean up step markers and process language that might have slipped through
+  result = result
+    .replace(/^\*\*Paso \d+:.*$/gmi, '')
+    .replace(/^\*\*Step \d+:.*$/gmi, '')
+    .replace(/^Te ayudo a.*siguiendo.*$/gmi, '')
+    .replace(/^Voy a proceder.*$/gmi, '')
+    .replace(/^Basándome en.*análisis.*$/gmi, '')
+    .replace(/\n\s*\n\s*\n/g, '\n\n')
+    .trim();
+  
+  return result || fullResponse;
+}
+
 // Helper function to execute DWG queries
 async function executeDwgQuery(dwgId: string, query: string): Promise<string> {
   try {
@@ -145,8 +267,9 @@ async function handleClaudeConversationWithStreaming(
   messages: any[], 
   systemMessage: string,
   dwgId: string,
-  sendUpdate: (type: string, data: any) => void
-): Promise<{ response: string; materialsData: any }> {
+  sendUpdate: (type: string, data: any) => void,
+  sessionId?: string
+): Promise<{ response: string; materialsData: any; sessionId: string }> {
   
   const tools = [
     {
@@ -165,13 +288,29 @@ async function handleClaudeConversationWithStreaming(
     },
   ];
 
-  console.log(`🚀 Starting Claude conversation for DWG: ${dwgId}`);
-  sendUpdate('conversation_started', { round: 0, message: 'Initializing conversation with Claude...' });
+  // Create or use existing session for conversation history
+  const currentSessionId = sessionId || createConversationSession(dwgId);
+  
+  console.log(`🚀 Starting Claude conversation for DWG: ${dwgId}, Session: ${currentSessionId}`);
+  sendUpdate('conversation_started', { 
+    round: 0, 
+    message: 'Initializing conversation with Claude...', 
+    sessionId: currentSessionId 
+  });
+  
+  // Add user message to history
+  if (messages.length > 0) {
+    addMessageToHistory(currentSessionId, 'user', messages[0].content);
+  }
+  
+  // Build context from conversation history
+  const historyContext = buildContextFromHistory(currentSessionId, 8);
+  const enhancedSystemMessage = historyContext ? `${systemMessage}\n\n${historyContext}` : systemMessage;
   
   let conversationMessages = [...messages];
   let fullResponse = "";
   let conversationRound = 1;
-  const maxRounds = 10;
+  const maxRounds = 15;
 
   try {
     while (conversationRound <= maxRounds) {
@@ -180,9 +319,9 @@ async function handleClaudeConversationWithStreaming(
       
       // Make API call to Claude
       const response = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 8000,
-        system: systemMessage,
+        system: enhancedSystemMessage,
         messages: conversationMessages,
         tools
       });
@@ -214,6 +353,7 @@ async function handleClaudeConversationWithStreaming(
         });
         
         const toolResults = [];
+        const toolCallsForHistory: Array<{ name: string; query: string; result: string }> = [];
         
         for (let i = 0; i < toolUseBlocks.length; i++) {
           const toolBlock = toolUseBlocks[i];
@@ -234,6 +374,14 @@ async function handleClaudeConversationWithStreaming(
               tool_use_id: toolBlock.id,
               content: result,
             });
+            
+            // Track tool call for history
+            toolCallsForHistory.push({
+              name: toolBlock.name,
+              query: query,
+              result: result
+            });
+            
             console.log(`✅ Query result: ${result.substring(0, 100)}...`);
             sendUpdate('tool_completed', { 
               round: conversationRound, 
@@ -254,6 +402,9 @@ async function handleClaudeConversationWithStreaming(
           content: toolResults
         });
 
+        // Add assistant response to history with tool calls
+        addMessageToHistory(currentSessionId, 'assistant', responseText, toolCallsForHistory);
+        
         conversationRound++;
         console.log(`➡️  Continuing to round ${conversationRound} with tool results`);
         sendUpdate('round_completed', { 
@@ -264,12 +415,16 @@ async function handleClaudeConversationWithStreaming(
         
       } else {
         // No tools used, Claude has finished
+        // Add final assistant response to history
+        addMessageToHistory(currentSessionId, 'assistant', responseText);
+        
         console.log(`✅ Claude finished conversation after ${conversationRound} rounds`);
         console.log(`📊 Final response length: ${fullResponse.length} characters`);
         sendUpdate('conversation_finished', { 
           totalRounds: conversationRound, 
           responseLength: fullResponse.length,
-          message: `Analysis completed in ${conversationRound} rounds`
+          message: `Analysis completed in ${conversationRound} rounds`,
+          sessionId: currentSessionId
         });
         break;
       }
@@ -294,7 +449,11 @@ async function handleClaudeConversationWithStreaming(
     }
 
     console.log('🎉 Claude conversation completed successfully');
-    return { response: fullResponse, materialsData };
+    
+    // Extract only the final useful result from Claude's response
+    const finalResult = extractFinalResult(fullResponse);
+    
+    return { response: finalResult, materialsData, sessionId: currentSessionId };
 
   } catch (error: any) {
     console.error('❌ Claude conversation error:', error);
@@ -303,208 +462,12 @@ async function handleClaudeConversationWithStreaming(
   }
 }
 
-// Simpler but more reliable Claude conversation handler
-async function handleClaudeConversation(
-  messages: any[], 
-  systemMessage: string,
-  dwgId: string
-): Promise<{ response: string; materialsData: any }> {
-  
-  const tools = [
-    {
-      name: 'query_dwg',
-      description: 'Execute a jq query on the loaded DWG file to extract specific information',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          query: {
-            type: 'string' as const,
-            description: 'jq query string to execute on the DWG JSON data',
-          },
-        },
-        required: ['query'],
-      },
-    },
-  ];
 
-  console.log(`🚀 Starting Claude conversation for DWG: ${dwgId}`);
-  
-  let conversationMessages = [...messages];
-  let fullResponse = "";
-  let conversationRound = 1;
-  const maxRounds = 10; // Prevent infinite loops
 
-  try {
-    while (conversationRound <= maxRounds) {
-      console.log(`🔄 Conversation round ${conversationRound}`);
-      
-      // Make API call to Claude
-      const response = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 8000,
-        system: systemMessage,
-        messages: conversationMessages,
-        tools
-      });
-
-      // Extract text and tool calls from response
-      const textBlocks = response.content.filter(block => block.type === 'text');
-      const toolUseBlocks = response.content.filter(block => block.type === 'tool_use');
-      
-      const responseText = textBlocks.map(block => block.text).join('');
-      fullResponse += (fullResponse ? '\n\n' : '') + responseText;
-      
-      console.log(`📝 Claude response (round ${conversationRound}): "${responseText.substring(0, 200)}..."`);
-      console.log(`🔧 Tool calls in this round: ${toolUseBlocks.length}`);
-
-      // If Claude wants to use tools, execute them and continue conversation
-      if (toolUseBlocks.length > 0) {
-        console.log(`⚡ Executing ${toolUseBlocks.length} tool call(s)`);
-        
-        const toolResults = [];
-        
-        for (const toolBlock of toolUseBlocks) {
-          if (toolBlock.name === 'query_dwg') {
-            console.log(`🔍 Executing query: ${(toolBlock.input as any).query}`);
-            const result = await executeDwgQuery(dwgId, (toolBlock.input as any).query);
-            toolResults.push({
-              type: 'tool_result' as const,
-              tool_use_id: toolBlock.id,
-              content: result,
-            });
-            console.log(`✅ Query result: ${result.substring(0, 100)}...`);
-          }
-        }
-
-        // Add assistant message and tool results to conversation
-        conversationMessages.push({
-          role: 'assistant' as const,
-          content: response.content
-        });
-        
-        conversationMessages.push({
-          role: 'user' as const,
-          content: toolResults
-        });
-
-        conversationRound++;
-        console.log(`➡️  Continuing to round ${conversationRound} with tool results`);
-        
-      } else {
-        // No tools used, Claude has finished
-        console.log(`✅ Claude finished conversation after ${conversationRound} rounds`);
-        console.log(`📊 Final response length: ${fullResponse.length} characters`);
-        break;
-      }
-    }
-
-    if (conversationRound > maxRounds) {
-      console.warn(`⚠️  Conversation hit max rounds (${maxRounds}), stopping`);
-    }
-
-    // Check for materials data
-    let materialsData = null;
-    try {
-      const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
-      if (jsonMatch) {
-        materialsData = JSON.parse(jsonMatch[0]);
-        console.log('📋 Materials list extracted:', materialsData);
-      }
-    } catch (error) {
-      console.log('ℹ️  No materials list found in response');
-    }
-
-    console.log('🎉 Claude conversation completed successfully');
-    return { response: fullResponse, materialsData };
-
-  } catch (error: any) {
-    console.error('❌ Claude conversation error:', error);
-    throw new Error(`Claude conversation failed: ${error.message}`);
-  }
-}
-
-// Non-streaming chat endpoint (fallback)
-app.post('/chat/basic', upload.single('dwg'), async (req, res) => {
-  try {
-    const { message, dwgId: existingDwgId } = req.body;
-    let dwgId = existingDwgId;
-
-    console.log(`📨 New chat request: ${message?.substring(0, 100)}...`);
-
-    // If a DWG file is uploaded, process it first
-    if (req.file) {
-      console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
-      dwgId = await uploadDwgFile(req.file.buffer, req.file.originalname);
-      console.log(`✅ DWG uploaded with ID: ${dwgId}`);
-    }
-
-    if (!dwgId) {
-      return res.status(400).json({ error: 'No DWG file provided or uploaded' });
-    }
-
-    // System message with improved query strategy to avoid token limits
-    const systemMessage = `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction. You have access to a DWG file with ID: ${dwgId}.
-
-CRITICAL: To avoid token limits, use FOCUSED queries that return only essential information. Do NOT query for all entities at once.
-
-STRATEGY FOR MATERIALS EXTRACTION:
-
-**Step 1: Quick entity count**
-Use: [.entities | length]
-
-**Step 2: Find specific text patterns (use selective filters)**
-- For amperages: .entities[] | select(.type == "TEXT" or .type == "MTEXT") | select(.text | test("[0-9]+[xX][0-9]+A")) | .text
-- For differentials: .entities[] | select(.type == "TEXT" or .type == "MTEXT") | select(.text | test("ID[SsIi]*[0-9]")) | .text  
-- For board names: .entities[] | select(.type == "TEXT" or .type == "MTEXT") | select(.text | test("[Tt][Ss][0-9]+")) | .text
-
-**Step 3: Extract material quantities**
-Count unique occurrences of each pattern found.
-
-**IMPORTANT CONSTRAINTS:**
-- Use | .text instead of full objects to minimize token usage
-- Query for specific patterns, not all entities
-- Limit results with | .[0:20] if needed
-- Focus on extracting materials data, not analyzing entire drawing
-
-When providing materials lists, format as JSON:
-{
-  "type": "materials_list",
-  "title": "Materials for Panel Analysis", 
-  "items": [
-    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
-    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA", "quantity": 2}
-  ]
-}
-
-ALWAYS use focused, selective queries to stay within token limits.`;
-
-    const messages = [
-      {
-        role: 'user' as const,
-        content: message,
-      },
-    ];
-
-    const result = await handleClaudeConversation(messages, systemMessage, dwgId);
-
-    res.json({
-      response: result.response,
-      materialsData: result.materialsData,
-      dwgId,
-    });
-
-    console.log('✅ Chat request completed successfully');
-
-  } catch (error: any) {
-    console.error('❌ Chat endpoint error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Streaming chat endpoint - shows progressive conversation rounds
+// Streaming chat endpoint - shows progressive conversation rounds with conversation history
 app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
   try {
-    const { message, dwgId: existingDwgId } = req.body;
+    const { message, dwgId: existingDwgId, sessionId: existingSessionId } = req.body;
     let dwgId = existingDwgId;
 
     // Set up Server-Sent Events
@@ -541,62 +504,7 @@ app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
     }
 
     // Prepare system message with DWG context
-    const systemMessage = `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction. You have access to a DWG file with ID: ${dwgId}.
-
-You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
-- entities: Array of drawing entities (lines, circles, text, etc.)
-- header: Drawing configuration variables  
-- tables: Layer definitions, block records, etc.
-
-MATERIALS EXTRACTION PROCESS - Follow this exact methodology:
-
-**Step 1: Search for title text**
-Use: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TITULO"; "i"))) | map({text: .text, position: .startPoint, handle: .handle})
-Replace "TITULO" with the board name being searched (e.g., "ts1a/n", "ts1b/e")
-
-**Step 2: Find board rectangle boundary**  
-After finding the board title position, find the rectangular boundary around it:
-Use: .entities | map(select(.type == "LWPOLYLINE" and (.vertices | length) == 4)) | map(select( (.vertices[0].x - $refX | if . < 0 then -. else . end) < 5000 and (.vertices[0].y - $refY | if . < 0 then -. else . end) < 5000 )) | map({ handle: .handle, bounds: { minX: ([.vertices[].x] | min), maxX: ([.vertices[].x] | max), minY: ([.vertices[].y] | min), maxY: ([.vertices[].y] | max) } })
-Replace $refX and $refY with the actual coordinates found in step 1.
-
-**Step 3: Extract entities within rectangle bounds**
-Use: .entities[] | select(((.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) >= \$minX and (.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) <= \$maxX and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) >= \$minY and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) <= \$maxY))
-
-**Step 4: Extract material specifications**
-- Amperages: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("[0-9]+x[0-9]+A"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Differential IDs: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("ID[0-9]+|IDSI[0-9]+"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Circuits: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TS[0-9]+[A-Z]+-[A-Z]+[0-9]*"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-
-**Common Materials Mapping (EXAMPLES - interpret other materials as needed):**
-- "2x10A" → TÉRMICA 2P10A 4.5KA C
-- "2x16A" → TÉRMICA 2P16A 4.5KA C  
-- "2x25A" → TÉRMICA 2P25A 4.5KA C
-- "4x40A" → TÉRMICA 4P40A 4.5KA C
-- "4x80A" → TÉRMICA 4P80A 4.5KA C
-- "ID" + "2x40A 30mA" → DIFERENCIAL 2P40A 30mA
-- "IDSI" + "4x40A 30mA" → DIFERENCIAL 4P40A 30mA
-
-**Equipment Keywords (EXAMPLES - look for other equipment types):**
-- "UPS" → UPS equipment
-- "SECCIONADOR" → Manual load disconnect switches
-- "GABINETE" → Enclosures
-- "DESCARGADOR" → Surge arresters
-
-**IMPORTANT:** The above are just EXAMPLES. Analyze all text found in the panel and interpret ANY electrical components, ratings, equipment, or materials mentioned. Use your expertise to categorize and quantify all materials present.
-
-When providing materials lists, format them as JSON with this structure:
-{
-  "type": "materials_list", 
-  "title": "Materials for [Board Name]",
-  "items": [
-    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
-    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA", "quantity": 2},
-    {"category": "Equipos Especiales", "description": "UPS 8kVA", "quantity": 2},
-    {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65", "quantity": 1}
-  ]
-}
-
-ALWAYS use the query_dwg tool to analyze the DWG data. Be thorough and methodical in your analysis.`;
+    const systemMessage = getDwgAnalysisSystemMessage({ dwgId });
 
     const messages = [
       {
@@ -607,13 +515,14 @@ ALWAYS use the query_dwg tool to analyze the DWG data. Be thorough and methodica
 
     sendUpdate('analysis_started', { message: 'Starting DWG analysis with Claude...' });
 
-    // Use streaming conversation handler with progress updates
-    const result = await handleClaudeConversationWithStreaming(messages, systemMessage, dwgId, sendUpdate);
+    // Use streaming conversation handler with progress updates and session management
+    const result = await handleClaudeConversationWithStreaming(messages, systemMessage, dwgId, sendUpdate, existingSessionId);
 
     sendUpdate('analysis_complete', { 
       response: result.response, 
       materialsData: result.materialsData,
-      dwgId 
+      dwgId,
+      sessionId: result.sessionId
     });
 
     console.log('✅ Streaming chat request completed successfully');
@@ -626,107 +535,37 @@ ALWAYS use the query_dwg tool to analyze the DWG data. Be thorough and methodica
   }
 });
 
-// Chat endpoint - supports both text and file uploads  
-app.post('/chat', upload.single('dwg'), async (req, res) => {
+
+// Get conversation history for a session
+app.get('/conversations/:sessionId/history', (req, res) => {
   try {
-    const { message, dwgId: existingDwgId } = req.body;
-    let dwgId = existingDwgId;
-
-    console.log(`📨 New chat request: ${message?.substring(0, 100)}...`);
-
-    // If a DWG file is uploaded, process it first
-    if (req.file) {
-      console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
-      dwgId = await uploadDwgFile(req.file.buffer, req.file.originalname);
-      console.log(`✅ DWG uploaded with ID: ${dwgId}`);
+    const { sessionId } = req.params;
+    const history = getConversationHistory(sessionId);
+    
+    if (history.length === 0) {
+      return res.status(404).json({ error: 'Session not found or empty' });
     }
-
-    if (!dwgId) {
-      return res.status(400).json({ error: 'No DWG file provided or uploaded' });
-    }
-
-    // Prepare system message with DWG context
-    const systemMessage = `You are an expert in analyzing DWG (AutoCAD) files for electrical panel materials extraction. You have access to a DWG file with ID: ${dwgId}.
-
-You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
-- entities: Array of drawing entities (lines, circles, text, etc.)
-- header: Drawing configuration variables
-- tables: Layer definitions, block records, etc.
-
-MATERIALS EXTRACTION PROCESS - Follow this exact methodology:
-
-**Step 1: Search for title text**
-Use: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TITULO"; "i"))) | map({text: .text, position: .startPoint, handle: .handle})
-Replace "TITULO" with the board name being searched (e.g., "ts1a/n", "ts1b/e")
-
-**Step 2: Find the rectangle boundary**
-Use: .entities | map(select(.type == "LWPOLYLINE" and (.vertices | length) == 4)) | map(select( (.vertices[0].x - \$refX | if . < 0 then -. else . end) < 3000 and (.vertices[0].y - \$refY | if . < 0 then -. else . end) < 3000 )) | map({ handle: .handle, firstVertex: .vertices[0], bounds: { minX: ([.vertices[].x] | min), maxX: ([.vertices[].x] | max), minY: ([.vertices[].y] | min), maxY: ([.vertices[].y] | max) } })
-
-**Step 3: Extract entities within rectangle bounds**
-Use: .entities[] | select(((.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) >= \$minX and (.startPoint.x // .center.x // .insertionPoint.x // (.vertices[0].x // 0)) <= \$maxX and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) >= \$minY and (.startPoint.y // .center.y // .insertionPoint.y // (.vertices[0].y // 0)) <= \$maxY))
-
-**Step 4: Extract material specifications**
-- Amperages: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("[0-9]+x[0-9]+A"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Differential IDs: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("ID[0-9]+|IDSI[0-9]+"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-- Circuits: .entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TS[0-9]+[A-Z]+-[A-Z]+[0-9]*"))) | map({text: .text, position: .startPoint}) | sort_by(.text)
-
-**Common Materials Mapping (EXAMPLES - interpret other materials as needed):**
-- "2x10A" → TÉRMICA 2P10A 4.5KA C
-- "2x16A" → TÉRMICA 2P16A 4.5KA C
-- "2x25A" → TÉRMICA 2P25A 4.5KA C
-- "4x40A" → TÉRMICA 4P40A 4.5KA C
-- "4x80A" → TÉRMICA 4P80A 4.5KA C
-- "ID" + "2x40A 30mA" → DIFERENCIAL 2P40A 30mA
-- "IDSI" + "4x40A 30mA" → DIFERENCIAL 4P40A 30mA
-
-**Equipment Keywords (EXAMPLES - look for other equipment types):**
-- "UPS" → UPS equipment
-- "SECCIONADOR" → Manual load disconnect switches
-- "GABINETE" → Enclosures
-- "DESCARGADOR" → Surge arresters
-
-**IMPORTANT:** The above are just EXAMPLES. Analyze all text found in the panel and interpret ANY electrical components, ratings, equipment, or materials mentioned. Use your expertise to categorize and quantify all materials present.
-
-When providing materials lists, format them as JSON with this structure (this is an EXAMPLE - adapt categories and items based on what you find):
-{
-  "type": "materials_list",
-  "title": "Materials for [board name]",
-  "items": [
-    {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C", "quantity": 5},
-    {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA", "quantity": 2},
-    {"category": "Equipos Especiales", "description": "UPS 8kVA", "quantity": 2},
-    {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65", "quantity": 1}
-  ]
-}
-
-ALWAYS use the query_dwg tool to analyze the DWG data. Be thorough and methodical in your analysis.`;
-
-    const messages = [
-      {
-        role: 'user' as const,
-              content: message,
-            },
-    ];
-
-    // Use the improved conversation handler
-    const result = await handleClaudeConversation(messages, systemMessage, dwgId);
-
-    console.log('✅ Chat request completed successfully');
-
-    res.json({
-      response: result.response,
-      dwgId,
-      materialsData: result.materialsData,
-    });
-
+    
+    res.json({ sessionId, history });
   } catch (error: any) {
-    console.error('❌ Chat endpoint error:', error);
+    console.error('❌ Get history error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get conversation statistics
+app.get('/conversations/stats', (_, res) => {
+  try {
+    const stats = getSessionStats();
+    res.json(stats);
+  } catch (error: any) {
+    console.error('❌ Get stats error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_, res) => {
   res.json({ status: 'ok', mcpConnected: mcpClient !== null });
 });
 

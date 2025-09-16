@@ -5,7 +5,7 @@ Esta guía permite extraer sistemáticamente todos los materiales de cualquier t
 ## Paso 1: Buscar el texto del título
 
 ```bash
-jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TITULO"; "i"))) | map({text: .text, position: .startPoint, handle: .handle})' completo.json
+jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TITULO"; "i"))) | map({text: .text, position: (.startPoint // .insertionPoint // .center), handle: .handle})' completo.json
 ```
 
 **Nota:** Reemplazar "TITULO" con el texto buscado (ej: "ts1a/n", "ts1b/e")
@@ -41,25 +41,25 @@ jq --argjson minX MIN_X --argjson maxX MAX_X --argjson minY MIN_Y --argjson maxY
 ### 4.1 Extraer amperajes de térmicas y diferenciales
 
 ```bash
-jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("[0-9]+x[0-9]+A"))) | map({text: .text, position: .startPoint}) | sort_by(.text)' extract_TITULO.json
+jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("[0-9]+x[0-9]+A"))) | map({text: .text, position: (.startPoint // .insertionPoint // .center)}) | sort_by(.text)' extract_TITULO.json
 ```
 
 ### 4.2 Extraer IDs de diferenciales
 
 ```bash
-jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("ID[0-9]+|IDSI[0-9]+"))) | map({text: .text, position: .startPoint}) | sort_by(.text)' extract_TITULO.json
+jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("ID[0-9]+|IDSI[0-9]+"))) | map({text: .text, position: (.startPoint // .insertionPoint // .center)}) | sort_by(.text)' extract_TITULO.json
 ```
 
 ### 4.3 Extraer circuitos
 
 ```bash
-jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TS[0-9]+[A-Z]+-[A-Z]+[0-9]*"))) | map({text: .text, position: .startPoint}) | sort_by(.text)' extract_TITULO.json
+jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map(select(.text | test("TS[0-9]+[A-Z]+-[A-Z]+[0-9]*"))) | map({text: .text, position: (.startPoint // .insertionPoint // .center)}) | sort_by(.text)' extract_TITULO.json
 ```
 
 ### 4.4 Extraer todos los textos
 
 ```bash
-jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map({text: .text, position: .startPoint})' extract_TITULO.json
+jq '.entities | map(select(.type == "TEXT" or .type == "MTEXT")) | map({text: .text, position: (.startPoint // .insertionPoint // .center)})' extract_TITULO.json
 ```
 
 ## Paso 5: Análisis de materiales
