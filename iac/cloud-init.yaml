@@ -1,0 +1,70 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - jq
+runcmd:
+  - |
+    set -euxo pipefail
+    LOG=/var/log/docker-install.log
+    exec >> "$LOG" 2>&1
+
+    echo "[cloud-init] Starting Docker install at $(date -Is)"
+
+    # Wait for any apt locks to clear (e.g., from cloud-init package upgrades)
+    wait_for_apt() {
+      while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+            fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+            fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+        echo "[cloud-init] Waiting for apt locks..."; sleep 5;
+      done
+    }
+
+    retry() {
+      local n=0; local max=5; local delay=5;
+      until "$@"; do
+        n=$((n+1))
+        if [ $n -ge $max ]; then
+          echo "[cloud-init] Command failed after $n attempts: $*"; return 1;
+        fi
+        echo "[cloud-init] Command failed. Attempt $n/$max: $*"; sleep $delay;
+      done
+    }
+
+    wait_for_apt
+    retry apt-get update -y
+
+    # Install Docker using official repository (preferred)
+    install -m 0755 -d /etc/apt/keyrings
+    retry bash -lc 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg'
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+
+    wait_for_apt
+    retry apt-get update -y
+
+    if ! apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+      echo "[cloud-init] Official Docker repo install failed, falling back to distro docker.io"
+      wait_for_apt
+      retry apt-get install -y docker.io
+    fi
+
+    # Add admin user to docker group (replaced by Terraform template)
+    usermod -aG docker ${admin_user} || true
+
+    systemctl enable --now docker
+    docker --version || true
+    groups ${admin_user} || true
+
+    echo "[cloud-init] Running docker hello-world test"
+    docker run --rm hello-world || true
+    echo "[cloud-init] Docker install completed at $(date -Is)"
+
+    # Create success marker file
+    echo "Docker installation completed at $(date -Is)" > /home/${admin_user}/docker-install-success.txt
+    chown ${admin_user}:${admin_user} /home/${admin_user}/docker-install-success.txt
