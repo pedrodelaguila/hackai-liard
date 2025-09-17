@@ -26,7 +26,7 @@ const MarkdownWithExport: React.FC<MarkdownWithExportProps> = ({ content, classN
         <div className="absolute top-2 right-2 z-10">
           <button
             onClick={handleExportTable}
-            className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs flex items-center gap-1 transition-colors shadow-lg"
+            className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs flex items-center gap-1 btn-hover shadow-lg"
             title="Descargar tablas como archivo Excel"
           >
             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">

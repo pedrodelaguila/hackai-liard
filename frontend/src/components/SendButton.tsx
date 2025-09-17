@@ -11,7 +11,7 @@ export const SendButton: React.FC<SendButtonProps> = ({ onClick, disabled, isLoa
     <button
       onClick={onClick}
       disabled={disabled}
-      className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white p-4 rounded-lg font-medium transition-all duration-200 flex items-center justify-center min-w-[60px] self-center"
+      className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white p-4 rounded-lg font-medium btn-hover flex items-center justify-center min-w-[60px] self-center"
     >
       {isLoading ? (
         <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">

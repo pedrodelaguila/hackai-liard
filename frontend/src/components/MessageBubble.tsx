@@ -1,6 +1,7 @@
 import React from 'react';
 import MarkdownWithExport from './MarkdownWithExport';
 import { MaterialsList } from './MaterialsList';
+import { useTypewriter } from '../hooks/useTypewriter';
 
 interface MaterialItem {
   category: string;
@@ -32,6 +33,28 @@ interface MessageBubbleProps {
   message: ChatMessage;
   isStreaming?: boolean;
 }
+
+// Componente para texto con efecto typewriter
+const TypewriterText: React.FC<{ content: string; role: string }> = ({ content, role }) => {
+  const { displayedText, isTyping } = useTypewriter({
+    text: content,
+    speed: 25, // Velocidad de escritura en ms
+    enabled: true
+  });
+
+  return (
+    <div className={`prose prose-sm max-w-none ${
+      role === 'user' 
+        ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
+        : 'text-gray-100 prose-headings:text-gray-200 prose-strong:text-gray-200 prose-code:bg-gray-700 prose-code:text-gray-200 prose-pre:bg-gray-700 prose-pre:text-gray-200 prose-table:border-gray-600'
+    }`}>
+      <MarkdownWithExport content={displayedText} />
+      {isTyping && role === 'assistant' && (
+        <span className="inline-block w-1 h-4 bg-blue-400 typewriter-cursor ml-1"></span>
+      )}
+    </div>
+  );
+};
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreaming = false }) => {
   return (
@@ -94,13 +117,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreami
               <MaterialsList materialsData={message.materialsData} />
             </>
           ) : (
-            <div className={`prose prose-sm max-w-none ${
-              message.role === 'user' 
-                ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
-                : 'text-gray-100 prose-headings:text-gray-200 prose-strong:text-gray-200 prose-code:bg-gray-700 prose-code:text-gray-200 prose-pre:bg-gray-700 prose-pre:text-gray-200 prose-table:border-gray-600'
-            }`}>
-              <MarkdownWithExport content={message.content} />
-            </div>
+            // Usar efecto typewriter solo para respuestas del asistente que NO están en streaming
+            message.role === 'assistant' && !isStreaming ? (
+              <TypewriterText content={message.content} role={message.role} />
+            ) : (
+              <div className={`prose prose-sm max-w-none ${
+                message.role === 'user' 
+                  ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
+                  : 'text-gray-100 prose-headings:text-gray-200 prose-strong:text-gray-200 prose-code:bg-gray-700 prose-code:text-gray-200 prose-pre:bg-gray-700 prose-pre:text-gray-200 prose-table:border-gray-600'
+              }`}>
+                <MarkdownWithExport content={message.content} />
+              </div>
+            )
           )}
         </div>
 

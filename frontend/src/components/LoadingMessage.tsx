@@ -10,6 +10,7 @@ export const LoadingMessage: React.FC = () => {
       </div>
       <div className="max-w-3xl bg-gray-800 text-gray-100 rounded-2xl rounded-bl-md border border-gray-700 px-4 py-3 shadow-lg">
         <div className="flex items-center gap-2">
+          <div className="w-2 h-2 bg-blue-400 rounded-full animate-smoothPulse"></div>
           <span className="font-medium">Pensando</span>
           <span className="loading-dots"></span>
         </div>

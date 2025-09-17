@@ -43,7 +43,7 @@ export const MaterialsList: React.FC<MaterialsListProps> = ({ materialsData }) =
         </h3>
         <button
           onClick={handleExportMaterials}
-          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm font-medium"
+          className="bg-green-600 hover:bg-green-700 ml-4 text-white px-4 py-2 rounded-lg flex items-center gap-2 btn-hover text-sm font-medium"
           title="Descargar como archivo Excel"
         >
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">

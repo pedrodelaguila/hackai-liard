@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 import { TopNavbar } from './components/TopNavbar';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -6,6 +6,7 @@ import { MessageBubble } from './components/MessageBubble';
 import { LoadingMessage } from './components/LoadingMessage';
 import { InputContainer } from './components/InputContainer';
 import type { ChatMessage, StreamUpdate } from './types';
+import { useAutoScroll } from './hooks/useAutoScroll';
 
 const BACKEND_URL = 'http://localhost:4000';
 
@@ -18,6 +19,13 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<ChatMessage | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Auto-scroll functionality
+  const { containerRef, scrollToBottom } = useAutoScroll({
+    dependency: messages.length + (streamingMessage ? 1 : 0),
+    enabled: true,
+    smooth: true
+  });
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -289,11 +297,18 @@ function App() {
     }
   };
 
+  // Auto-scroll cuando el usuario empiece a escribir
+  useEffect(() => {
+    if (currentMessage.trim()) {
+      scrollToBottom();
+    }
+  }, [currentMessage, scrollToBottom]);
+
   return (
     <div className="h-screen bg-gray-900 text-gray-100 flex flex-col">
       <TopNavbar dwgId={dwgId} sessionId={sessionId} />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-900">
+        <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-900">
           {messages.length === 0 && <WelcomeScreen />}
           {messages.map((message, index) => (
             <MessageBubble key={index} message={message} />
