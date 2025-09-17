@@ -39,6 +39,16 @@ export async function getAuthToken() {
 }
 
 /**
+ * Checks the status of a translation job.
+ * @param urn The URN of the object being translated.
+ * @returns The translation manifest with status information.
+ */
+export async function getTranslationStatus(urn: string) {
+  await getAuthToken(); // Ensure we have fresh authentication
+  return derivativesApi.getManifest(urn);
+}
+
+/**
  * Ensures the application's default bucket exists on APS.
  * Creates it if it doesn't.
  */

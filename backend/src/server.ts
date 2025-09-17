@@ -172,6 +172,32 @@ app.get('/api/aps/token', async (_req, res) => {
   }
 });
 
+/**
+ * APS Translation Status endpoint.
+ */
+app.get('/api/aps/status/:urn', async (req, res) => {
+  try {
+    const { urn } = req.params;
+    const manifest = await aps.getTranslationStatus(urn);
+    
+    const status = manifest.body.status;
+    const progress = manifest.body.progress;
+    
+    res.json({
+      status: status,
+      progress: progress,
+      manifest: manifest.body
+    });
+  } catch (error: any) {
+    console.error('Error fetching translation status:', error);
+    if (error.response && error.response.status === 404) {
+      res.status(404).json({ error: 'Translation not found or not started' });
+    } else {
+      res.status(500).json({ error: 'Failed to fetch translation status' });
+    }
+  }
+});
+
 // Extract final result from Claude's full response
 function extractFinalResult(fullResponse: string): string {
   // Split into sections by double newlines
