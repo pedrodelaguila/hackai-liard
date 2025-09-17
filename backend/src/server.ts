@@ -489,7 +489,7 @@ app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
     // If a DWG file is uploaded, process it first
     if (req.file) {
       console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
-      sendUpdate('status', { message: 'Uploading and parsing DWG file...', stage: 'upload' });
+      sendUpdate('status', { message: 'Subiendo y analizando archivo DWG...', stage: 'upload' });
       
       dwgId = await uploadDwgFile(req.file.buffer, req.file.originalname);
       console.log(`✅ DWG uploaded with ID: ${dwgId}`);

@@ -351,7 +351,7 @@ function getOutputFormat(): string {
 When providing materials lists, format them as JSON with this structure following IRAM standards:
 {
   "type": "materials_list",
-  "title": "Materials for [Board Name] - IRAM Compliant",
+  "title": "Materiales para [Board Name] - Según normas IRAM",
   "items": [
     {"category": "Térmicas", "description": "TÉRMICA 2P10A 4.5KA C (IRAM/IEC)", "quantity": 5},
     {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA (IRAM 2281)", "quantity": 2},

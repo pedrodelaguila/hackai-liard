@@ -60,7 +60,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreami
       } px-4 py-3 shadow-lg`}>
         <div className="flex justify-between items-center text-xs opacity-75 mb-2">
           <span className="font-medium">
-            {message.role === 'user' ? 'You' : 'Assistant'}
+            {message.role === 'user' ? 'Tú' : 'Asistente'}
           </span>
           <span>
             {message.timestamp.toLocaleTimeString()}
@@ -70,9 +70,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreami
         {message.roundInfo && isStreaming && (
           <div className="flex items-center gap-2 mb-2">
             <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs">
-              {message.roundInfo.status === 'thinking' && '🤔 Thinking'}
-              {message.roundInfo.status === 'executing' && '⚡ Querying'}
-              {message.roundInfo.status === 'completed' && '✅ Complete'}
+              {message.roundInfo.status === 'thinking' && '🤔 Pensando'}
+              {message.roundInfo.status === 'executing' && '⚡ Consultando'}
+              {message.roundInfo.status === 'completed' && '✅ Completado'}
               {message.roundInfo.round > 0 && ` - Round ${message.roundInfo.round}`}
               {message.roundInfo.totalRounds && `/${message.roundInfo.totalRounds}`}
             </span>
@@ -107,7 +107,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreami
         {isStreaming && (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-500/30">
             <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-            <span className="text-xs text-blue-300">Claude is analyzing...</span>
+            <span className="text-xs text-blue-300">DWGAssistant está analizando...</span>
           </div>
         )}
       </div>

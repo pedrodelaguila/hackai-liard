@@ -35,8 +35,8 @@ export const InputContainer: React.FC<InputContainerProps> = ({
               onKeyDown={onKeyDown}
               placeholder={
                 dwgId
-                  ? "Ask me about your DWG file..."
-                  : "Upload a DWG file and ask me questions about it..."
+                  ? "Pregúntame sobre tu archivo DWG..."
+                  : "Sube un archivo DWG y hazme preguntas sobre él..."
               }
               disabled={isLoading}
               className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg resize-none min-h-[40px] max-h-[120px] focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-white placeholder-gray-400 pr-4 pb-10"
@@ -56,7 +56,7 @@ export const InputContainer: React.FC<InputContainerProps> = ({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                   <span className="text-gray-300 text-xs truncate">
-                    {dwgFile ? dwgFile.name.split('.')[0].substring(0, 8) + '...' : 'Upload'}
+                    {dwgFile ? dwgFile.name.split('.')[0].substring(0, 8) + '...' : 'Subir'}
                   </span>
                 </div>
               </label>

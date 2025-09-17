@@ -24,7 +24,7 @@ function App() {
     if (file && file.name.toLowerCase().endsWith('.dwg')) {
       setDwgFile(file);
     } else {
-      alert('Please select a valid DWG file');
+      alert('Por favor selecciona un archivo DWG válido');
     }
   };
 
@@ -43,7 +43,7 @@ function App() {
     // Initialize streaming message
     const initialStreamingMessage: ChatMessage = {
       role: 'assistant',
-      content: 'Initializing analysis...',
+      content: 'Inicializando análisis...',
       timestamp: new Date(),
       isStreaming: true,
       roundInfo: { round: 0, status: 'thinking' as const }
@@ -96,7 +96,7 @@ function App() {
                 handleStreamUpdate(update);
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
               } catch (e) {
-                console.warn('Failed to parse stream update:', line);
+                console.warn('Error al procesar actualización:', line);
               }
             }
           }
@@ -110,10 +110,10 @@ function App() {
       }
 
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('Error enviando mensaje:', error);
       const errorMessage: ChatMessage = {
         role: 'assistant',
-        content: 'Sorry, there was an error processing your request. Please try again.',
+        content: 'Lo siento, hubo un error procesando tu solicitud. Por favor inténtalo de nuevo.',
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, errorMessage]);
@@ -163,7 +163,7 @@ function App() {
       case 'round_started':
         setStreamingMessage(prev => prev ? {
           ...prev,
-          content: `Round ${update.data.round}: Claude is thinking...`,
+          content: `Ronda ${update.data.round}: DWGAssistant está pensando...`,
           roundInfo: {
             round: update.data.round,
             status: 'thinking' as const
@@ -178,7 +178,7 @@ function App() {
           roundInfo: {
             round: update.data.round,
             status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const,
-            toolInfo: update.data.toolCount > 0 ? `Preparing ${update.data.toolCount} ${update.data.toolCount === 1 ? 'query' : 'queries'}` : undefined
+            toolInfo: update.data.toolCount > 0 ? `Preparando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}` : undefined
           }
         } : null);
         break;
@@ -213,7 +213,7 @@ function App() {
           roundInfo: {
             round: update.data.round,
             status: 'executing' as const,
-            toolInfo: `Query ${update.data.toolIndex} completed`
+            toolInfo: `Consulta ${update.data.toolIndex} completada`
           }
         } : null);
         break;
@@ -224,7 +224,7 @@ function App() {
           roundInfo: {
             round: update.data.round,
             status: 'thinking' as const,
-            toolInfo: 'Preparing next round...'
+            toolInfo: 'Preparando siguiente ronda...'
           }
         } : null);
         break;
@@ -236,7 +236,7 @@ function App() {
             round: update.data.totalRounds,
             status: 'completed' as const,
             totalRounds: update.data.totalRounds,
-            toolInfo: `Analysis completed in ${update.data.totalRounds} rounds`
+            toolInfo: `Análisis completado en ${update.data.totalRounds} rondas`
           }
         } : null);
         break;

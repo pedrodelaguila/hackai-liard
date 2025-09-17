@@ -30,8 +30,8 @@ export const MaterialsList: React.FC<MaterialsListProps> = ({ materialsData }) =
     try {
       exportMaterialsToExcel(materialsData);
     } catch (error) {
-      console.error('Error exporting materials to Excel:', error);
-      alert('Error exporting materials to Excel. Please try again.');
+      console.error('Error exportando materiales a Excel:', error);
+      alert('Error exportando materiales a Excel. Por favor inténtalo de nuevo.');
     }
   };
 
@@ -44,12 +44,12 @@ export const MaterialsList: React.FC<MaterialsListProps> = ({ materialsData }) =
         <button
           onClick={handleExportMaterials}
           className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm font-medium"
-          title="Download as Excel file"
+          title="Descargar como archivo Excel"
         >
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
             <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
           </svg>
-          Export Excel
+          Exportar Excel
         </button>
       </div>
 
@@ -84,7 +84,7 @@ export const MaterialsList: React.FC<MaterialsListProps> = ({ materialsData }) =
       ))}
 
       <div className="bg-red-600 text-white p-3 rounded text-center font-bold">
-        Total items: {materialsData.items.reduce((sum, item) => sum + item.quantity, 0)}
+        Total de elementos: {materialsData.items.reduce((sum, item) => sum + item.quantity, 0)}
       </div>
     </div>
   );
