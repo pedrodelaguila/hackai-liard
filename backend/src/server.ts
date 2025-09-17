@@ -6,7 +6,11 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { getDwgAnalysisSystemMessage } from './prompts.js';
+import * as aps from './apsService.js';
 import { 
   createConversationSession, 
   addMessageToHistory, 
@@ -14,6 +18,10 @@ import {
   buildContextFromHistory, 
   getSessionStats 
 } from './conversationHistory.js';
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -101,7 +109,19 @@ async function initializeMCPClient(): Promise<void> {
 }
 
 // Upload DWG file to parser service and get ID
-async function uploadDwgFile(fileBuffer: Buffer, filename: string): Promise<string> {
+async function uploadDwgFile(
+  fileBuffer: Buffer,
+  filename: string
+): Promise<{ id: string; localPath: string }> {
+  // Save the file locally first for APS upload
+  const localDrawingsDir = path.join(__dirname, '../cadviewer-data/drawings');
+  await fs.promises.mkdir(localDrawingsDir, { recursive: true });
+  
+  const localFilename = `${Date.now()}-${filename}`;
+  const localPath = path.join(localDrawingsDir, localFilename);
+  await fs.promises.writeFile(localPath, fileBuffer);
+
+  // Also upload to the DWG parser service for analysis
   const formData = new FormData();
   formData.append('dwgfile', fileBuffer, filename);
 
@@ -114,8 +134,8 @@ async function uploadDwgFile(fileBuffer: Buffer, filename: string): Promise<stri
     throw new Error(`Failed to upload DWG: ${response.statusText}`);
   }
 
-  const result = await response.json() as any;
-  return result.id;
+  const result = (await response.json()) as any;
+  return { id: result.id, localPath: localPath };
 }
 
 // Execute jq query via MCP
@@ -135,6 +155,22 @@ async function queryDwg(id: string, query: string): Promise<string> {
 
   throw new Error('Invalid response from MCP server');
 }
+
+/**
+ * APS Token endpoint for the viewer.
+ */
+app.get('/api/aps/token', async (_req, res) => {
+  try {
+    const token = await aps.getAuthToken();
+    res.json({
+      access_token: token.access_token,
+      expires_in: token.expires_in,
+    });
+  } catch (error) {
+    console.error('Error fetching APS token:', error);
+    res.status(500).json({ error: 'Failed to fetch token' });
+  }
+});
 
 // Extract final result from Claude's full response
 function extractFinalResult(fullResponse: string): string {
@@ -491,9 +527,25 @@ app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
       console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
       sendUpdate('status', { message: 'Uploading and parsing DWG file...', stage: 'upload' });
       
-      dwgId = await uploadDwgFile(req.file.buffer, req.file.originalname);
+      const { id, localPath } = await uploadDwgFile(req.file.buffer, req.file.originalname);
+      dwgId = id;
       console.log(`✅ DWG uploaded with ID: ${dwgId}`);
-      
+
+      // Asynchronously start the translation to not block the chat flow
+      aps.uploadAndTranslateDwg(dwgId, localPath)
+        .then(urn => {
+          console.log(`✅ DWG translation started. URN: ${urn}`);
+          // The URN is the ID of the object in the bucket, base64 encoded.
+          // The frontend will receive this URN and can start polling for translation progress,
+          // but for simplicity, we'll just let the viewer handle it.
+          // We'll send a message when the process is initiated.
+          sendUpdate('dwg_translation_started', { urn });
+        })
+        .catch(err => {
+          console.error('APS translation failed:', err);
+          sendUpdate('dwg_translation_failed', { error: 'Could not prepare DWG for viewing.' });
+        });
+
       sendUpdate('dwg_uploaded', { dwgId, message: 'DWG file processed successfully!' });
     }
 

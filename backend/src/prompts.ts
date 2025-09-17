@@ -364,6 +364,40 @@ When providing materials lists, format them as JSON with this structure followin
 }
 
 /**
+ * DWG view format for triggering the frontend viewer
+ */
+function getDwgViewFormat(): string {
+  return `
+**DWG VIEWING TOOL:**
+When you want to show the user a specific part of the drawing you are analyzing (for example, after finding the board boundaries), you can output a JSON object with the following structure. This will trigger a viewer in the frontend to display the specified region.
+
+{
+  "type": "dwg_view",
+  "region": {
+    "minX": 11348.8,
+    "minY": 2307.4,
+    "maxX": 13959.5,
+    "maxY": 2609.4
+  },
+  "highlight": [
+    {
+      "type": "rectangle",
+      "minX": 11348.8,
+      "minY": 2307.4,
+      "maxX": 13959.5,
+      "maxY": 2609.4,
+      "color": "#FF0000"
+    }
+  ]
+}
+
+- "type": MUST be "dwg_view".
+- "region": The bounding box to zoom the camera to. Use the coordinates you find for the board's rectangle.
+- "highlight": (Optional) An array of elements to draw on top of the viewer. You can use this to highlight the exact bounding box you found.
+`;
+}
+
+/**
  * Final mandatory rule
  */
 function getMandatoryRule(): string {
@@ -426,6 +460,7 @@ export function getDwgAnalysisSystemMessage(options: PromptOptions): string {
   prompt += getCommonMaterialsMapping();
   prompt += getSpecialCharacterHandling();
   prompt += getOutputFormat();
+  prompt += getDwgViewFormat();
   prompt += getMandatoryRule();
   
   return prompt;

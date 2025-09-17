@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import './App.css';
 import { exportMaterialsToExcel } from './utils/excelExport';
 import MarkdownWithExport from './components/MarkdownWithExport';
+import AutodeskViewer from './components/AutodeskViewer';
 
 interface MaterialItem {
   category: string;
@@ -19,6 +20,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   materialsData?: MaterialsData;
+  dwgViewData?: DwgViewData;
   timestamp: Date;
   isStreaming?: boolean;
   roundInfo?: {
@@ -27,6 +29,17 @@ interface ChatMessage {
     status: 'thinking' | 'executing' | 'completed';
     toolInfo?: string;
   };
+}
+
+interface DwgViewData {
+  type: 'dwg_view';
+  region: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  highlight?: any[];
 }
 
 interface StreamUpdate {
@@ -45,6 +58,8 @@ function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<ChatMessage | null>(null);
+  const [urn, setUrn] = useState<string | null>(null);
+  const [dwgViewData, setDwgViewData] = useState<DwgViewData | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -171,6 +186,10 @@ function App() {
         } : null);
         break;
 
+      case 'dwg_translation_started':
+        setUrn(update.data.urn);
+        break;
+
       case 'analysis_started':
         setStreamingMessage(prev => prev ? {
           ...prev,
@@ -200,6 +219,22 @@ function App() {
         break;
 
       case 'round_response':
+        // Check if the response content is a dwg_view JSON
+        try {
+          const contentData = JSON.parse(update.data.text);
+          if (contentData.type === 'dwg_view') {
+            setDwgViewData(contentData);
+            // Don't show the JSON in the chat, just a confirmation
+            setStreamingMessage(prev => prev ? {
+              ...prev,
+              content: (prev.content || '') + '\n\n*Displaying visual context in the viewer.*',
+            } : null);
+            return;
+          }
+        } catch (e) {
+          // Not a JSON object, treat as regular text
+        }
+        
         setStreamingMessage(prev => prev ? {
           ...prev,
           content: update.data.text,
@@ -282,6 +317,7 @@ function App() {
           role: 'assistant',
           content: update.data.response,
           materialsData: update.data.materialsData,
+          dwgViewData: dwgViewData || undefined,
           timestamp: new Date(),
           isStreaming: false
         };
@@ -414,171 +450,179 @@ function App() {
         </div>
       </div>
 
-      {/* Chat Container */}
-      <div className="flex-1 flex flex-col p-8 gap-8 overflow-hidden">
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto flex flex-col gap-4 p-4 bg-white/90 rounded-2xl shadow-xl">
-          {messages.length === 0 && (
-            <div className="text-center py-12 text-gray-600">
-              <h2 className="text-gray-800 text-xl mb-4">Welcome to the DWG Analysis Assistant!</h2>
-              <p className="mb-4">Upload a DWG file and ask me questions about it. I can help you:</p>
-              <ul className="text-left max-w-md mx-auto space-y-2">
-                <li className="flex items-center gap-2">
-                  <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
-                  Extract materials lists from electrical panels
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                  Analyze drawing components
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="w-2 h-2 bg-pink-500 rounded-full"></span>
-                  Query specific elements
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
-                  Identify circuits and specifications
-                </li>
-              </ul>
-            </div>
-          )}
-
-          {messages.map((message, index) => (
-            <div key={index} className={`flex flex-col gap-2 p-4 rounded-xl max-w-4xl animate-fadeIn ${
-              message.role === 'user'
-                ? 'self-end bg-gradient-to-r from-indigo-500 to-purple-500 text-white'
-                : 'self-start bg-gray-800 border border-gray-600 text-white'
-            }`}>
-              <div className="flex justify-between items-center text-sm opacity-75">
-                <span className="font-medium">
-                  {message.role === 'user' ? '👤 You' : '🤖 Assistant'}
-                </span>
-                <span className="text-xs">
-                  {message.timestamp.toLocaleTimeString()}
-                </span>
+      {/* Main Container */}
+      <div className="flex-1 flex p-8 gap-8 overflow-hidden">
+        {/* Left column: Chat */}
+        <div className="flex-1 flex flex-col gap-8 overflow-hidden">
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto flex flex-col gap-4 p-4 bg-white/90 rounded-2xl shadow-xl">
+            {messages.length === 0 && (
+              <div className="text-center py-12 text-gray-600">
+                <h2 className="text-gray-800 text-xl mb-4">Welcome to the DWG Analysis Assistant!</h2>
+                <p className="mb-4">Upload a DWG file and ask me questions about it. I can help you:</p>
+                <ul className="text-left max-w-md mx-auto space-y-2">
+                  <li className="flex items-center gap-2">
+                    <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
+                    Extract materials lists from electrical panels
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+                    Analyze drawing components
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="w-2 h-2 bg-pink-500 rounded-full"></span>
+                    Query specific elements
+                  </li>
+                   <li className="flex items-center gap-2">
+                    <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
+                    Display visual context of the analysis
+                  </li>
+                </ul>
               </div>
-              <div className="leading-relaxed">
-                {message.materialsData ? (
-                  <>
-                    <div className="mb-4">
-                      {message.content.replace(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/, '').trim()}
-                    </div>
-                    {renderMaterialsList(message.materialsData)}
-                  </>
-                ) : (
-                  <MarkdownWithExport 
-                    content={message.content}
-                    className={`prose prose-sm max-w-none ${
-                      message.role === 'user' 
-                        ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
-                        : 'text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20'
-                    }`}
-                  />
-                )}
-              </div>
-            </div>
-          ))}
+            )}
 
-          {streamingMessage && (
-            <div className="self-start bg-gray-800 border-2 border-blue-400 text-white p-4 rounded-xl max-w-4xl">
-              <div className="flex justify-between items-center text-sm opacity-75 mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">🤖 Assistant</span>
-                  {streamingMessage.roundInfo && (
-                    <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs">
-                      {streamingMessage.roundInfo.status === 'thinking' && '🤔 Thinking'}
-                      {streamingMessage.roundInfo.status === 'executing' && '⚡ Querying'}
-                      {streamingMessage.roundInfo.status === 'completed' && '✅ Complete'}
-                      {streamingMessage.roundInfo.round > 0 && ` - Round ${streamingMessage.roundInfo.round}`}
-                      {streamingMessage.roundInfo.totalRounds && `/${streamingMessage.roundInfo.totalRounds}`}
-                    </span>
+            {messages.map((message, index) => (
+              <div key={index} className={`flex flex-col gap-2 p-4 rounded-xl max-w-4xl animate-fadeIn ${
+                message.role === 'user'
+                  ? 'self-end bg-gradient-to-r from-indigo-500 to-purple-500 text-white'
+                  : 'self-start bg-gray-800 border border-gray-600 text-white'
+              }`}>
+                <div className="flex justify-between items-center text-sm opacity-75">
+                  <span className="font-medium">
+                    {message.role === 'user' ? '👤 You' : '🤖 Assistant'}
+                  </span>
+                  <span className="text-xs">
+                    {message.timestamp.toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="leading-relaxed">
+                  {message.materialsData ? (
+                    <>
+                      <div className="mb-4">
+                        {message.content.replace(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/, '').trim()}
+                      </div>
+                      {renderMaterialsList(message.materialsData)}
+                    </>
+                  ) : (
+                    <MarkdownWithExport 
+                      content={message.content}
+                      className={`prose prose-sm max-w-none ${
+                        message.role === 'user' 
+                          ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
+                          : 'text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20'
+                      }`}
+                    />
                   )}
                 </div>
-                <span className="text-xs">
-                  {streamingMessage.timestamp.toLocaleTimeString()}
-                </span>
               </div>
-              
-              {streamingMessage.roundInfo?.toolInfo && (
-                <div className="bg-blue-600 p-2 rounded text-sm mb-3 text-white">
-                  🔍 {streamingMessage.roundInfo.toolInfo}
+            ))}
+
+            {streamingMessage && (
+              <div className="self-start bg-gray-800 border-2 border-blue-400 text-white p-4 rounded-xl max-w-4xl">
+                <div className="flex justify-between items-center text-sm opacity-75 mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">🤖 Assistant</span>
+                    {streamingMessage.roundInfo && (
+                      <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs">
+                        {streamingMessage.roundInfo.status === 'thinking' && '🤔 Thinking'}
+                        {streamingMessage.roundInfo.status === 'executing' && '⚡ Querying'}
+                        {streamingMessage.roundInfo.status === 'completed' && '✅ Complete'}
+                        {streamingMessage.roundInfo.round > 0 && ` - Round ${streamingMessage.roundInfo.round}`}
+                        {streamingMessage.roundInfo.totalRounds && `/${streamingMessage.roundInfo.totalRounds}`}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs">
+                    {streamingMessage.timestamp.toLocaleTimeString()}
+                  </span>
                 </div>
-              )}
-              
-              <div className="leading-relaxed">
-                {streamingMessage.materialsData ? (
-                  <>
-                    <div className="mb-4">
-                      {streamingMessage.content.replace(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/, '').trim()}
-                    </div>
-                    {renderMaterialsList(streamingMessage.materialsData)}
-                  </>
-                ) : (
-                  <MarkdownWithExport 
-                    content={streamingMessage.content}
-                    className="prose prose-sm max-w-none text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20"
-                  />
+                
+                {streamingMessage.roundInfo?.toolInfo && (
+                  <div className="bg-blue-600 p-2 rounded text-sm mb-3 text-white">
+                    🔍 {streamingMessage.roundInfo.toolInfo}
+                  </div>
                 )}
-              </div>
+                
+                <div className="leading-relaxed">
+                  {streamingMessage.materialsData ? (
+                    <>
+                      <div className="mb-4">
+                        {streamingMessage.content.replace(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/, '').trim()}
+                      </div>
+                      {renderMaterialsList(streamingMessage.materialsData)}
+                    </>
+                  ) : (
+                    <MarkdownWithExport 
+                      content={streamingMessage.content}
+                      className="prose prose-sm max-w-none text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20"
+                    />
+                  )}
+                </div>
 
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-400">
-                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-blue-300">Claude is analyzing...</span>
+                <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-400">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                  <span className="text-xs text-blue-300">Claude is analyzing...</span>
+                </div>
               </div>
-            </div>
-          )}
-
-          {isLoading && (
-            <div className="self-start bg-gray-50 border text-gray-800 p-4 rounded-xl max-w-4xl">
-              <div className="flex justify-between items-center text-sm opacity-75 mb-2">
-                <span className="font-medium">🤖 Assistant</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span>Thinking</span>
-                <span className="loading-dots"></span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Input Container */}
-        <div className="bg-white/90 rounded-2xl p-6 shadow-xl">
-          <div className="mb-4">
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept=".dwg"
-              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-            />
-            {dwgFile && (
-              <span className="text-gray-600 text-sm font-medium mt-2 inline-block">
-                📎 {dwgFile.name}
-              </span>
             )}
           </div>
 
-          <div className="flex gap-4 items-end">
-            <textarea
-              value={currentMessage}
-              onChange={(e) => setCurrentMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                dwgId
-                  ? "Ask me about your DWG file..."
-                  : "Upload a DWG file and ask me questions about it..."
-              }
-              disabled={isLoading}
-              className="flex-1 p-4 border-2 border-gray-200 rounded-xl resize-none min-h-[60px] focus:outline-none focus:border-indigo-500 transition-colors"
-            />
-            <button
-              onClick={sendMessage}
-              disabled={isLoading || (!currentMessage.trim() && !dwgFile)}
-              className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white px-8 py-4 rounded-xl font-medium hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none"
-            >
-              Send
-            </button>
+          {/* Input Container */}
+          <div className="bg-white/90 rounded-2xl p-6 shadow-xl">
+            <div className="mb-4">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept=".dwg"
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+              />
+              {dwgFile && (
+                <span className="text-gray-600 text-sm font-medium mt-2 inline-block">
+                  📎 {dwgFile.name}
+                </span>
+              )}
+            </div>
+
+            <div className="flex gap-4 items-end">
+              <textarea
+                value={currentMessage}
+                onChange={(e) => setCurrentMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  dwgId
+                    ? "Ask me about your DWG file..."
+                    : "Upload a DWG file and ask me questions about it..."
+                }
+                disabled={isLoading}
+                className="flex-1 p-4 border-2 border-gray-200 rounded-xl resize-none min-h-[60px] focus:outline-none focus:border-indigo-500 transition-colors"
+              />
+              <button
+                onClick={sendMessage}
+                disabled={isLoading || (!currentMessage.trim() && !dwgFile)}
+                className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white px-8 py-4 rounded-xl font-medium hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none"
+              >
+                Send
+              </button>
+            </div>
           </div>
+        </div>
+        
+        {/* Right column: DWG Viewer */}
+        <div className="flex-1 bg-white/90 rounded-2xl shadow-xl overflow-hidden">
+          {urn ? (
+            <AutodeskViewer urn={urn} viewData={dwgViewData} />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center text-gray-600">
+                <svg className="w-24 h-24 mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 12l-2 3-2-3m0 0l-2 3-2-3m6 0l2 3-2-3M3 12l6 9 6-9-6-9-6 9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 12l-2 3-2-3m0 0l-2 3-2-3m6 0l2 3-2-3M3 12l6 9 6-9-6-9-6 9z" transform="translate(0, -4)" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 12l-2 3-2-3m0 0l-2 3-2-3m6 0l2 3-2-3M3 12l6 9 6-9-6-9-6 9z" transform="translate(0, 4)" />
+                </svg>
+              <h3 className="text-xl font-semibold text-gray-800">DWG Viewer</h3>
+              <p className="mt-2">The visual context for your analysis will appear here once a DWG file is processed.</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
