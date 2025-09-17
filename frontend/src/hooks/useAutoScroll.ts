@@ -13,7 +13,7 @@ export const useAutoScroll = ({
 }: UseAutoScrollOptions = {}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrollingRef = useRef(false);
-  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const scrollTimeoutRef = useRef<number | null>(null);
 
   // Función para hacer scroll al final
   const scrollToBottom = useCallback((force = false) => {
@@ -46,7 +46,7 @@ export const useAutoScroll = ({
     }
 
     // Después de 1 segundo sin scroll, permitir auto-scroll de nuevo
-    scrollTimeoutRef.current = setTimeout(() => {
+    scrollTimeoutRef.current = window.setTimeout(() => {
       isUserScrollingRef.current = false;
     }, 1000);
   }, []);

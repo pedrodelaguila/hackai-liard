@@ -11,13 +11,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDwgAnalysisSystemMessage } from './prompts.js';
 import * as aps from './apsService.js';
-import { 
-  createConversationSession, 
-  addMessageToHistory, 
-  getConversationHistory, 
-  buildContextFromHistory, 
-  getSessionStats 
+import {
+  createConversationSession,
+  addMessageToHistory,
+  getConversationHistory,
+  buildContextFromHistory,
+  getSessionStats
 } from './conversationHistory.js';
+import { handleDwgUpload, handleDwgUploadWithChat } from './dwgUploadHandler.js';
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -108,15 +109,15 @@ async function initializeMCPClient(): Promise<void> {
   }
 }
 
-// Upload DWG file to parser service and get ID
-async function uploadDwgFile(
+// Export uploadDwgFile for reuse
+export async function uploadDwgFile(
   fileBuffer: Buffer,
   filename: string
 ): Promise<{ id: string; localPath: string }> {
   // Save the file locally first for APS upload
   const localDrawingsDir = path.join(__dirname, '../cadviewer-data/drawings');
   await fs.promises.mkdir(localDrawingsDir, { recursive: true });
-  
+
   const localFilename = `${Date.now()}-${filename}`;
   const localPath = path.join(localDrawingsDir, localFilename);
   await fs.promises.writeFile(localPath, fileBuffer);
@@ -550,29 +551,8 @@ app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
 
     // If a DWG file is uploaded, process it first
     if (req.file) {
-      console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
-      sendUpdate('status', { message: 'Subiendo y analizando archivo DWG...', stage: 'upload' });
-      
-      const { id, localPath } = await uploadDwgFile(req.file.buffer, req.file.originalname);
-      dwgId = id;
-      console.log(`✅ DWG uploaded with ID: ${dwgId}`);
-
-      // Asynchronously start the translation to not block the chat flow
-      aps.uploadAndTranslateDwg(dwgId, localPath)
-        .then(urn => {
-          console.log(`✅ DWG translation started. URN: ${urn}`);
-          // The URN is the ID of the object in the bucket, base64 encoded.
-          // The frontend will receive this URN and can start polling for translation progress,
-          // but for simplicity, we'll just let the viewer handle it.
-          // We'll send a message when the process is initiated.
-          sendUpdate('dwg_translation_started', { urn });
-        })
-        .catch(err => {
-          console.error('APS translation failed:', err);
-          sendUpdate('dwg_translation_failed', { error: 'Could not prepare DWG for viewing.' });
-        });
-
-      sendUpdate('dwg_uploaded', { dwgId, message: 'DWG file processed successfully!' });
+      const uploadResult = await handleDwgUploadWithChat(req, res, sendUpdate);
+      dwgId = uploadResult.dwgId;
     }
 
     if (!dwgId) {
@@ -641,6 +621,9 @@ app.get('/conversations/stats', (_, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Upload DWG only (no chat)
+app.post('/upload-dwg', upload.single('dwg'), handleDwgUpload);
 
 // Health check
 app.get('/health', (_, res) => {

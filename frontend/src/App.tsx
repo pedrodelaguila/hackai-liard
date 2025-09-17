@@ -1,12 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 import { TopNavbar } from './components/TopNavbar';
-import { WelcomeScreen } from './components/WelcomeScreen';
 import { MessageBubble } from './components/MessageBubble';
 import { LoadingMessage } from './components/LoadingMessage';
 import { InputContainer } from './components/InputContainer';
+import { AppLayout } from './components/AppLayout';
+import { UploadPrompt } from './components/UploadPrompt';
 import type { ChatMessage, StreamUpdate } from './types';
 import { useAutoScroll } from './hooks/useAutoScroll';
+import { useAppPhases } from './hooks/useAppPhases';
+import { useTranslationPolling } from './hooks/useTranslationPolling';
+import { useDwgUpload } from './hooks/useDwgUpload';
 
 const BACKEND_URL = 'http://localhost:4000';
 
@@ -20,7 +24,25 @@ function App() {
   const [streamingMessage, setStreamingMessage] = useState<ChatMessage | null>(null);
   const [urn, setUrn] = useState<string | null>(null);
   const [dwgViewData, setDwgViewData] = useState<any>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const { appPhase, viewerReady, moveToProcessing, moveToReady, isUploadPhase } = useAppPhases();
+  const { pollTranslationStatus } = useTranslationPolling(moveToReady);
+
+  const handleDwgUploadComplete = (dwgId: string, urn?: string) => {
+    setDwgId(dwgId);
+    moveToProcessing(); // Move to processing phase immediately after upload
+
+    if (urn) {
+      setUrn(urn);
+      console.log('Starting translation polling for URN:', urn);
+      pollTranslationStatus(urn); // This will call moveToReady() when translation completes
+    } else {
+      console.log('No URN returned, viewer will not be available');
+    }
+  };
+
+  const { uploadDwg } = useDwgUpload(handleDwgUploadComplete);
   
   // Auto-scroll functionality
   const { containerRef, scrollToBottom } = useAutoScroll({
@@ -38,16 +60,37 @@ function App() {
     }
   };
 
+  const handleUploadAndStart = async () => {
+    if (dwgFile) {
+      setIsLoading(true);
+      try {
+        await uploadDwg(dwgFile);
+        setDwgFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } catch (error) {
+        console.error('Upload failed:', error);
+        alert('Error al subir el archivo. Por favor intenta de nuevo.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
   const sendMessage = async () => {
-    if (!currentMessage.trim() && !dwgFile) return;
+    if (isUploadPhase && !dwgFile) return;
+    if (!isUploadPhase && !currentMessage.trim() && !dwgFile) return;
 
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: currentMessage || (dwgFile ? `Uploaded file: ${dwgFile.name}` : ''),
-      timestamp: new Date(),
-    };
-
-    setMessages(prev => [...prev, userMessage]);
+    // Only add user message if we're not in upload phase (where we just upload without message)
+    if (!isUploadPhase) {
+      const userMessage: ChatMessage = {
+        role: 'user',
+        content: currentMessage || (dwgFile ? `Uploaded file: ${dwgFile.name}` : ''),
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, userMessage]);
+    }
     setIsLoading(true);
 
     // Initialize streaming message
@@ -62,7 +105,14 @@ function App() {
 
     try {
       const formData = new FormData();
-      formData.append('message', currentMessage);
+
+      // Only append message if we have one and we're not in upload phase
+      if (!isUploadPhase && currentMessage.trim()) {
+        formData.append('message', currentMessage);
+      } else if (isUploadPhase) {
+        // Default message for upload phase
+        formData.append('message', 'Archivo DWG subido. ¿Qué información necesitas sobre este dibujo?');
+      }
 
       if (dwgFile) {
         formData.append('dwg', dwgFile);
@@ -147,14 +197,18 @@ function App() {
 
       case 'dwg_uploaded':
         setDwgId(update.data.dwgId);
-        setStreamingMessage(prev => prev ? {
-          ...prev,
-          content: update.data.message,
-        } : null);
+        moveToProcessing();
+        setMessages([{
+          role: 'assistant',
+          content: 'DWG uploaded! Preparing viewer... You can ask questions now.',
+          timestamp: new Date()
+        }]);
+        setStreamingMessage(null);
         break;
 
       case 'dwg_translation_started':
         setUrn(update.data.urn);
+        pollTranslationStatus(update.data.urn);
         break;
 
       case 'analysis_started':
@@ -330,29 +384,48 @@ function App() {
   return (
     <div className="h-screen bg-gray-900 text-gray-100 flex flex-col">
       <TopNavbar dwgId={dwgId} sessionId={sessionId} />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <AppLayout
+        appPhase={appPhase}
+        viewerReady={viewerReady}
+        urn={urn}
+        dwgViewData={dwgViewData}
+      >
         <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-900">
-          {messages.length === 0 && <WelcomeScreen />}
-          {messages.map((message, index) => (
-            <MessageBubble key={index} message={message} />
-          ))}
-          {streamingMessage && (
-            <MessageBubble message={streamingMessage} isStreaming />
+          {isUploadPhase ? (
+            <UploadPrompt
+              onFileUpload={handleFileUpload}
+              fileInputRef={fileInputRef}
+              dwgFile={dwgFile}
+              onUploadAndStart={handleUploadAndStart}
+              isUploading={isLoading}
+            />
+          ) : (
+            <>
+              {messages.map((message, index) => (
+                <MessageBubble key={index} message={message} />
+              ))}
+              {streamingMessage && (
+                <MessageBubble message={streamingMessage} isStreaming />
+              )}
+              {isLoading && <LoadingMessage />}
+            </>
           )}
-          {isLoading && <LoadingMessage />}
         </div>
-        <InputContainer
-          currentMessage={currentMessage}
-          setCurrentMessage={setCurrentMessage}
-          dwgFile={dwgFile}
-          dwgId={dwgId}
-          isLoading={isLoading}
-          onSendMessage={sendMessage}
-          onKeyDown={handleKeyDown}
-          onFileUpload={handleFileUpload}
-          fileInputRef={fileInputRef}
-        />
-      </div>
+        {!isUploadPhase && (
+          <InputContainer
+            currentMessage={currentMessage}
+            setCurrentMessage={setCurrentMessage}
+            dwgFile={dwgFile}
+            dwgId={dwgId}
+            isLoading={isLoading}
+            onSendMessage={sendMessage}
+            onKeyDown={handleKeyDown}
+            onFileUpload={handleFileUpload}
+            fileInputRef={fileInputRef}
+            disabled={false}
+          />
+        )}
+      </AppLayout>
     </div>
   );
 }

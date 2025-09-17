@@ -16,7 +16,7 @@ export const useTypewriter = ({
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const indexRef = useRef(0);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     // Si el efecto está deshabilitado, mostrar todo el texto inmediatamente
@@ -38,7 +38,7 @@ export const useTypewriter = ({
       if (indexRef.current < text.length) {
         setDisplayedText(text.slice(0, indexRef.current + 1));
         indexRef.current++;
-        timeoutRef.current = setTimeout(typeNextChar, speed);
+        timeoutRef.current = window.setTimeout(typeNextChar, speed);
       } else {
         setIsTyping(false);
         onComplete?.();
