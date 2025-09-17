@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import './App.css';
+import { exportMaterialsToExcel } from './utils/excelExport';
+import MarkdownWithExport from './components/MarkdownWithExport';
 
 interface MaterialItem {
   category: string;
@@ -326,11 +326,32 @@ function App() {
       return acc;
     }, {} as Record<string, MaterialItem[]>);
 
+    const handleExportMaterials = () => {
+      try {
+        exportMaterialsToExcel(materialsData);
+      } catch (error) {
+        console.error('Error exporting materials to Excel:', error);
+        alert('Error exporting materials to Excel. Please try again.');
+      }
+    };
+
     return (
       <div className="bg-white border-2 border-red-500 rounded-lg p-6 mt-4 shadow-lg">
-        <h3 className="text-xl font-bold mb-4 pb-2 border-b-2 border-red-500" style={{ color: '#dc2626' }}>
-          {materialsData.title}
-        </h3>
+        <div className="flex justify-between items-center mb-4 pb-2 border-b-2 border-red-500">
+          <h3 className="text-xl font-bold" style={{ color: '#dc2626' }}>
+            {materialsData.title}
+          </h3>
+          <button
+            onClick={handleExportMaterials}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm font-medium"
+            title="Download as Excel file"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+            Export Excel
+          </button>
+        </div>
 
         {Object.entries(categories).map(([category, items]) => (
           <div key={category} className="mb-6">
@@ -445,15 +466,14 @@ function App() {
                     {renderMaterialsList(message.materialsData)}
                   </>
                 ) : (
-                  <div className={`prose prose-sm max-w-none ${
-                    message.role === 'user' 
-                      ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
-                      : 'text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20'
-                  }`}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {message.content}
-                    </ReactMarkdown>
-                  </div>
+                  <MarkdownWithExport 
+                    content={message.content}
+                    className={`prose prose-sm max-w-none ${
+                      message.role === 'user' 
+                        ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
+                        : 'text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20'
+                    }`}
+                  />
                 )}
               </div>
             </div>
@@ -494,11 +514,10 @@ function App() {
                     {renderMaterialsList(streamingMessage.materialsData)}
                   </>
                 ) : (
-                  <div className="prose prose-sm max-w-none text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {streamingMessage.content}
-                    </ReactMarkdown>
-                  </div>
+                  <MarkdownWithExport 
+                    content={streamingMessage.content}
+                    className="prose prose-sm max-w-none text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:text-white prose-table:text-white prose-table:border-white/20"
+                  />
                 )}
               </div>
 
