@@ -2,3 +2,4 @@
 *.env
 *dist/
 backend/cadviewer-data/drawings/*
+*.idea
