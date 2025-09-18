@@ -9,12 +9,27 @@ export async function handleDwgUpload(req: Request, res: Response): Promise<void
       return;
     }
 
-    console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
+    console.log(`📂 Processing uploaded DWG: ${req.file.originalname} (${req.file.size} bytes)`);
 
     const { id, localPath } = await uploadDwgFile(req.file.buffer, req.file.originalname);
     console.log(`✅ DWG uploaded with ID: ${id}`);
 
-    // Start APS translation and return URN immediately
+    // Check file size (10MB limit for Autodesk viewer)
+    const maxSizeForViewer = 2 * 1024 * 1024; // 10MB
+    const isLargeFile = req.file.size > maxSizeForViewer;
+
+    if (isLargeFile) {
+      const fileSizeMB = (req.file.size / (1024 * 1024)).toFixed(2);
+      console.log(`⚠️  Large file detected (${fileSizeMB}MB), skipping Autodesk viewer processing`);
+
+      res.json({
+        dwgId: id,
+        message: `DWG uploaded successfully. File is large (${fileSizeMB}MB), viewer unavailable but queries work normally.`
+      });
+      return;
+    }
+
+    // Start APS translation for files <= 10MB
     try {
       const urn = await aps.uploadAndTranslateDwg(id, localPath);
       console.log(`✅ DWG translation started. URN: ${urn}`);
@@ -44,24 +59,38 @@ export async function handleDwgUploadWithChat(
   res: Response,
   sendUpdate: (type: string, data: any) => void
 ): Promise<{ dwgId: string; localPath: string }> {
-  console.log(`📂 Processing uploaded DWG: ${req.file!.originalname}`);
+  console.log(`📂 Processing uploaded DWG: ${req.file!.originalname} (${req.file!.size} bytes)`);
   sendUpdate('status', { message: 'Subiendo y analizando archivo DWG...', stage: 'upload' });
 
   const { id, localPath } = await uploadDwgFile(req.file!.buffer, req.file!.originalname);
   console.log(`✅ DWG uploaded with ID: ${id}`);
 
-  // Asynchronously start the translation to not block the chat flow
-  aps.uploadAndTranslateDwg(id, localPath)
-    .then(urn => {
-      console.log(`✅ DWG translation started. URN: ${urn}`);
-      sendUpdate('dwg_translation_started', { urn });
-    })
-    .catch(err => {
-      console.error('APS translation failed:', err);
-      sendUpdate('dwg_translation_failed', { error: 'Could not prepare DWG for viewing.' });
-    });
+  // Check file size (10MB limit for Autodesk viewer)
+  const maxSizeForViewer = 10 * 1024 * 1024; // 10MB
+  const isLargeFile = req.file!.size > maxSizeForViewer;
 
-  sendUpdate('dwg_uploaded', { dwgId: id, message: 'DWG file processed successfully!' });
+  if (isLargeFile) {
+    const fileSizeMB = (req.file!.size / (1024 * 1024)).toFixed(2);
+    console.log(`⚠️  Large file detected (${fileSizeMB}MB), skipping Autodesk viewer processing`);
+
+    sendUpdate('dwg_uploaded', {
+      dwgId: id,
+      message: `DWG file processed successfully! File is large (${fileSizeMB}MB), viewer unavailable but all queries work normally.`
+    });
+  } else {
+    // Asynchronously start the translation to not block the chat flow for files <= 10MB
+    aps.uploadAndTranslateDwg(id, localPath)
+      .then(urn => {
+        console.log(`✅ DWG translation started. URN: ${urn}`);
+        sendUpdate('dwg_translation_started', { urn });
+      })
+      .catch(err => {
+        console.error('APS translation failed:', err);
+        sendUpdate('dwg_translation_failed', { error: 'Could not prepare DWG for viewing.' });
+      });
+
+    sendUpdate('dwg_uploaded', { dwgId: id, message: 'DWG file processed successfully!' });
+  }
 
   return { dwgId: id, localPath };
 }

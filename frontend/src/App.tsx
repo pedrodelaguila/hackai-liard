@@ -53,11 +53,14 @@ function App() {
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file && file.name.toLowerCase().endsWith('.dwg')) {
-      setDwgFile(file);
-    } else {
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.dwg')) {
       alert('Por favor selecciona un archivo DWG válido');
+      return;
     }
+
+    setDwgFile(file);
   };
 
   const handleUploadAndStart = async () => {
