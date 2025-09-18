@@ -18,9 +18,21 @@ import {
 const app = express();
 const port = process.env.PORT || 4000;
 
+// CORS configuration for Vercel frontend
+const corsOptions = {
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000', // Development
+    /^https:\/\/.*\.vercel\.app$/, // Vercel deployments
+    /^https:\/\/.*\.vercel\.com$/, // Alternative Vercel domain
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
+
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' })); // Add request size limit
 
 // Multer for file uploads
 const storage = multer.memoryStorage();

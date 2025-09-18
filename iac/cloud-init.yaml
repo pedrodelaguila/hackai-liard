@@ -1,0 +1,45 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+apt:
+  sources:
+    docker.list:
+      source: "deb [arch=amd64] https://download.docker.com/linux/ubuntu $RELEASE stable"
+      keyid: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - jq
+  - nginx
+  - openssl
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+  - certbot
+  - python3-certbot-nginx
+
+groups:
+  - docker
+
+users:
+  - default
+  - name: ${admin_user}
+    groups: docker
+
+runcmd:
+  - systemctl enable --now docker
+  - systemctl enable nginx
+  - systemctl stop nginx  # Stop nginx initially to avoid port conflicts
+  - mkdir -p /home/${admin_user}/scripts
+  - mkdir -p /etc/ssl/certs
+  - mkdir -p /etc/ssl/private
+  - echo "Docker installation completed at $(date -Is)" > /home/${admin_user}/docker-install-success.txt
+  - chown ${admin_user}:${admin_user} /home/${admin_user}/docker-install-success.txt
+  - echo "[cloud-init] Infrastructure setup completed at $(date -Is)"

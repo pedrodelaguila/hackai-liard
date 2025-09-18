@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.env.production
+.env.staging
+dist
+*.log
+.git
+.gitignore
+README.md
+.nyc_output
+coverage
+.cache
