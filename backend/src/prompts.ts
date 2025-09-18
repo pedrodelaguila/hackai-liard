@@ -43,6 +43,12 @@ function getBaseSystemPrompt(dwgId: string): string {
    - "Extrayendo especificaciones de térmicas y diferenciales..."
    - "Catalogando los elementos de protección encontrados..."
 
+5. **BUDGET RESPONSE FORMAT**: When creating budgets (presupuestos):
+   - In your intermediate responses, provide ONLY explanatory text like "Basándome en la lista de materiales extraída anteriormente para [board name], procedo a crear el presupuesto detallado."
+   - DO NOT include the full markdown table in intermediate responses
+   - Save the complete markdown table for your FINAL response only
+   - This prevents the user from seeing the same budget information twice
+
 You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
 - entities: Array of drawing entities (lines, circles, text, etc.)
 - header: Drawing configuration variables
