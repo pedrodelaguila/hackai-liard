@@ -116,7 +116,7 @@ const filterInternalMessages = (content: string): string => {
 const TypewriterText: React.FC<{ content: string; role: string }> = ({ content, role }) => {
   const { displayedText, isTyping } = useTypewriter({
     text: content,
-    speed: 25, // Velocidad de escritura en ms
+    speed: 8, // Velocidad de escritura en ms
     enabled: true
   });
 
