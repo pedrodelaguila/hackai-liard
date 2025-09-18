@@ -128,7 +128,7 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }}
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/dwg-parser:${{ github.sha }}
 
-          # Tag as latest for docker-compose
+          # Tag as latest for docker compose
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:latest
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/dwg-parser:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/dwg-parser:latest
 
@@ -136,10 +136,10 @@ jobs:
           mv docker-compose.prod.yml docker-compose.yml
 
           # Stop existing containers
-          docker-compose down || true
+          docker compose down || true
 
           # Start new containers
-          docker-compose up -d
+          docker compose up -d
 
           # Clean up old images
           docker image prune -f
