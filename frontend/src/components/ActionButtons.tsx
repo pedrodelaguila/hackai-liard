@@ -81,7 +81,15 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
   const handleActionClick = (action: typeof actions[0]) => {
     // In compact mode, use savedBoardName or prompt for it
     const boardToUse = isCompact ? savedBoardName : boardName;
-    
+
+    console.log('DEBUG ActionButtons:', {
+      isCompact,
+      savedBoardName,
+      boardName,
+      boardToUse,
+      actionId: action.id
+    });
+
     if (!isCompact && (!isAccepted || !boardName.trim())) return;
     if (isCompact && !boardToUse.trim()) {
       alert('Por favor especifica primero el nombre del tablero usando el modo completo.');
@@ -95,7 +103,8 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
     }
     
     const prompt = action.prompt(boardToUse);
-    onActionSelect(prompt, isCompact ? undefined : boardToUse);
+    // Always pass boardToUse so it gets saved, except when in compact mode and we already have a saved name
+    onActionSelect(prompt, !isCompact ? boardToUse : undefined);
   };
 
   const handleCustomSubmit = () => {
@@ -105,7 +114,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
     const specificAction = actions.find(a => a.id === 'specific');
     if (specificAction) {
       const prompt = specificAction.prompt(boardToUse, customQuery);
-      onActionSelect(prompt, isCompact ? undefined : boardToUse);
+      onActionSelect(prompt, !isCompact ? boardToUse : undefined);
     }
     setShowCustomInput(false);
     setCustomQuery('');

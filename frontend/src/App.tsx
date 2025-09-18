@@ -58,8 +58,11 @@ function App() {
   };
 
   const handleActionSelect = async (prompt: string, boardName?: string) => {
-    // Save board name if provided (from first use)
-    if (boardName && !savedBoardName) {
+    console.log('DEBUG handleActionSelect:', { prompt: prompt.substring(0, 50), boardName, currentSavedBoardName: savedBoardName });
+
+    // Save board name if provided (from first use or update existing)
+    if (boardName) {
+      console.log('DEBUG setting savedBoardName to:', boardName);
       setSavedBoardName(boardName);
     }
     
@@ -472,7 +475,7 @@ function App() {
                 onUploadAndStart={handleUploadAndStart}
                 isUploading={isLoading}
               />
-            ) : isProcessingPhase && messages.length === 0 ? (
+            ) : !isUploadPhase && messages.length === 0 && !savedBoardName ? (
               <ActionButtons
                 onActionSelect={handleActionSelect}
                 onFileUpload={handleFileUploadFromActions}
@@ -496,8 +499,8 @@ function App() {
         </AppLayout>
       </div>
       
-      {/* Fixed Bottom Action Bar */}
-      {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && (
+      {/* Fixed Bottom Action Bar - only show if we have a saved board name */}
+      {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && savedBoardName && (
         <div className="fixed bottom-0 left-0 right-0 z-50">
           <ActionButtons
             onActionSelect={handleActionSelect}
