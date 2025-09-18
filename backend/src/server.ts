@@ -498,17 +498,105 @@ async function handleClaudeConversationWithStreaming(
       sendUpdate('max_rounds_reached', { maxRounds, message: `Analysis stopped after ${maxRounds} rounds` });
     }
 
-    // Check for materials data
+    // Check for materials data with improved extraction and cleanup
     let materialsData = null;
     try {
-      const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
-      if (jsonMatch) {
-        materialsData = JSON.parse(jsonMatch[0]);
-        console.log('📋 Materials list extracted:', materialsData);
-        sendUpdate('materials_extracted', { materialsData });
+      // Clean the response first - remove malformed JSON fragments
+      let cleanedResponse = fullResponse
+        .replace(/"\s*highlight"\s*:\s*\[\s*\]\s*\}/g, '') // Remove malformed highlight fragments
+        .replace(/\{\s*,/g, '{') // Fix malformed JSON starting with comma
+        .replace(/,\s*\}/g, '}'); // Fix trailing commas
+
+      // Try multiple patterns to find materials JSON (most specific first)
+      let jsonMatch = cleanedResponse.match(/\{\s*"type":\s*"materials_list"[\s\S]*?\}\s*$/);
+      
+      // Alternative pattern for JSON at the end of response
+      if (!jsonMatch) {
+        jsonMatch = cleanedResponse.match(/```json\s*(\{\s*"type":\s*"materials_list"[\s\S]*?\})\s*```/);
+        if (jsonMatch) jsonMatch[0] = jsonMatch[1];
       }
-    } catch (error) {
-      console.log('ℹ️  No materials list found in response');
+      
+      // Look for any JSON with items and categories (more flexible)
+      if (!jsonMatch) {
+        jsonMatch = cleanedResponse.match(/\{\s*"type":\s*"materials_list"[\s\S]*"items":\s*\[[\s\S]*?\]\s*\}/);
+      }
+      
+      // Try to find valid JSON with items array (broader search)
+      if (!jsonMatch) {
+        jsonMatch = cleanedResponse.match(/\{[\s\S]*?"items":\s*\[\s*\{[\s\S]*?"category"[\s\S]*?\}\s*\][\s\S]*?\}/);
+      }
+      
+      // Try to find the last complete JSON object in the response
+      if (!jsonMatch) {
+        // More sophisticated JSON extraction using balanced braces
+        const lines = cleanedResponse.split('\n');
+        let jsonStr = '';
+        let braceCount = 0;
+        let foundStart = false;
+        
+        // Look for lines that might contain our JSON
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i];
+          if (line.includes('"type"') && line.includes('"materials_list"')) {
+            foundStart = true;
+          }
+          if (foundStart) {
+            jsonStr = line + '\n' + jsonStr;
+            for (const char of line) {
+              if (char === '{') braceCount++;
+              if (char === '}') braceCount--;
+            }
+            if (braceCount === 0 && jsonStr.includes('"type"')) {
+              break;
+            }
+          }
+        }
+        
+        if (jsonStr.trim()) {
+          jsonMatch = [jsonStr.trim()];
+        }
+      }
+      
+      if (jsonMatch) {
+        let jsonStr = jsonMatch[0].trim();
+        
+        // Additional cleanup for common issues
+        jsonStr = jsonStr
+          .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+          .replace(/([{,]\s*)"([^"]*)"(\s*[}\],])/g, '$1"$2"$3') // Ensure proper quotes
+          .replace(/}\s*{/g, '},{'); // Fix missing commas between objects
+        
+        console.log('🔍 Attempting to parse JSON:', jsonStr.substring(0, 200) + '...');
+        
+        materialsData = JSON.parse(jsonStr);
+        
+        // Validate and normalize the structure
+        if (materialsData && materialsData.items && Array.isArray(materialsData.items)) {
+          // Ensure type is set
+          if (!materialsData.type) {
+            materialsData.type = 'materials_list';
+          }
+          
+          // Validate each item has required fields
+          materialsData.items = materialsData.items.filter((item: any) => 
+            item.category && item.description && typeof item.quantity === 'number'
+          );
+          
+          if (materialsData.items.length > 0) {
+            console.log('📋 Materials list extracted and validated:', materialsData);
+            sendUpdate('materials_extracted', { materialsData });
+          } else {
+            console.log('❌ Materials list had no valid items after filtering');
+            materialsData = null;
+          }
+        } else {
+          console.log('❌ Materials JSON is missing required structure');
+          materialsData = null;
+        }
+      }
+    } catch (error: any) {
+      console.log('❌ Error parsing materials JSON:', error.message);
+      console.log('🔍 Response content for debugging:', fullResponse.substring(Math.max(0, fullResponse.length - 800)));
     }
 
     console.log('🎉 Claude conversation completed successfully');

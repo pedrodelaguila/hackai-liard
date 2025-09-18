@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import './App.css';
 import { TopNavbar } from './components/TopNavbar';
 import { MessageBubble } from './components/MessageBubble';
 import { LoadingMessage } from './components/LoadingMessage';
-import { InputContainer } from './components/InputContainer';
 import { AppLayout } from './components/AppLayout';
 import { UploadPrompt } from './components/UploadPrompt';
+import { ActionButtons } from './components/ActionButtons';
 import type { ChatMessage, StreamUpdate } from './types';
 import { useAutoScroll } from './hooks/useAutoScroll';
 import { useAppPhases } from './hooks/useAppPhases';
@@ -16,7 +16,6 @@ const BACKEND_URL = 'http://localhost:4000';
 
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [currentMessage, setCurrentMessage] = useState('');
   const [dwgFile, setDwgFile] = useState<File | null>(null);
   const [dwgId, setDwgId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -24,9 +23,10 @@ function App() {
   const [streamingMessage, setStreamingMessage] = useState<ChatMessage | null>(null);
   const [urn, setUrn] = useState<string | null>(null);
   const [dwgViewData, setDwgViewData] = useState<any>(null);
+  const [savedBoardName, setSavedBoardName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { appPhase, viewerReady, moveToProcessing, moveToReady, isUploadPhase } = useAppPhases();
+  const { appPhase, viewerReady, moveToProcessing, moveToReady, isUploadPhase, isProcessingPhase } = useAppPhases();
   const { pollTranslationStatus } = useTranslationPolling(moveToReady);
 
   const handleDwgUploadComplete = (dwgId: string, urn?: string) => {
@@ -43,57 +43,38 @@ function App() {
   };
 
   const { uploadDwg } = useDwgUpload(handleDwgUploadComplete);
-  
-  // Auto-scroll functionality
-  const { containerRef, scrollToBottom } = useAutoScroll({
-    dependency: messages.length + (streamingMessage ? 1 : 0),
-    enabled: true,
-    smooth: true
-  });
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.dwg')) {
-      alert('Por favor selecciona un archivo DWG válido');
-      return;
-    }
-
-    setDwgFile(file);
+  const handleFileUploadFromActions = async (file: File) => {
+    // Clear current state when uploading new file
+    setMessages([]);
+    setStreamingMessage(null);
+    setDwgId(null);
+    setSessionId(null);
+    setUrn(null);
+    setDwgViewData(null);
+    setSavedBoardName(''); // Reset saved board name
+    
+    await uploadDwg(file);
   };
 
-  const handleUploadAndStart = async () => {
-    if (dwgFile) {
-      setIsLoading(true);
-      try {
-        await uploadDwg(dwgFile);
-        setDwgFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      } catch (error) {
-        console.error('Upload failed:', error);
-        alert('Error al subir el archivo. Por favor intenta de nuevo.');
-      } finally {
-        setIsLoading(false);
-      }
+  const handleActionSelect = async (prompt: string, boardName?: string) => {
+    // Save board name if provided (from first use)
+    if (boardName && !savedBoardName) {
+      setSavedBoardName(boardName);
     }
-  };
-
-  const sendMessage = async () => {
-    if (isUploadPhase && !dwgFile) return;
-    if (!isUploadPhase && !currentMessage.trim() && !dwgFile) return;
-
-    // Only add user message if we're not in upload phase (where we just upload without message)
-    if (!isUploadPhase) {
-      const userMessage: ChatMessage = {
-        role: 'user',
-        content: currentMessage || (dwgFile ? `Uploaded file: ${dwgFile.name}` : ''),
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, userMessage]);
-    }
+    
+    // Add user message immediately
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: prompt,
+      timestamp: new Date(),
+    };
+    setMessages(prev => [...prev, userMessage]);
+    
+    // Force scroll to bottom after adding user message
+    setTimeout(() => scrollToBottom(true), 100);
+    
+    // Send the message
     setIsLoading(true);
 
     // Initialize streaming message
@@ -108,18 +89,9 @@ function App() {
 
     try {
       const formData = new FormData();
-
-      // Only append message if we have one and we're not in upload phase
-      if (!isUploadPhase && currentMessage.trim()) {
-        formData.append('message', currentMessage);
-      } else if (isUploadPhase) {
-        // Default message for upload phase
-        formData.append('message', 'Archivo DWG subido. ¿Qué información necesitas sobre este dibujo?');
-      }
-
-      if (dwgFile) {
-        formData.append('dwg', dwgFile);
-      } else if (dwgId) {
+      formData.append('message', prompt);
+      
+      if (dwgId) {
         formData.append('dwgId', dwgId);
       }
 
@@ -166,25 +138,56 @@ function App() {
         }
       }
 
-      setCurrentMessage('');
-      setDwgFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-
     } catch (error) {
       console.error('Error enviando mensaje:', error);
       const errorMessage: ChatMessage = {
         role: 'assistant',
-        content: 'Lo siento, hubo un error procesando tu solicitud. Por favor inténtalo de nuevo.',
+        content: 'Ha ocurrido un error, intenta nuevamente.',
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, errorMessage]);
-    } finally {
       setIsLoading(false);
       setStreamingMessage(null);
     }
   };
+  
+  // Auto-scroll functionality
+  const { containerRef, scrollToBottom } = useAutoScroll({
+    dependency: messages.length + (streamingMessage ? 1 : 0) + (streamingMessage?.content?.length || 0),
+    enabled: true,
+    smooth: true
+  });
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.dwg')) {
+      alert('Por favor selecciona un archivo DWG válido');
+      return;
+    }
+
+    setDwgFile(file);
+  };
+
+  const handleUploadAndStart = async () => {
+    if (dwgFile) {
+      setIsLoading(true);
+      try {
+        await uploadDwg(dwgFile);
+        setDwgFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } catch (error) {
+        console.error('Upload failed:', error);
+        alert('Error al subir el archivo. Por favor intenta de nuevo.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
 
   const handleStreamUpdate = (update: StreamUpdate) => {
     console.log('Stream update:', update.type, update.data);
@@ -259,15 +262,71 @@ function App() {
           // Not a JSON object, treat as regular text
         }
         
-        setStreamingMessage(prev => prev ? {
-          ...prev,
-          content: update.data.text,
-          roundInfo: {
-            round: update.data.round,
-            status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const,
-            toolInfo: update.data.toolCount > 0 ? `Preparando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}` : undefined
-          }
-        } : null);
+        // Filter out internal thinking messages and any remaining JSON
+        let filteredText = update.data.text;
+        
+        // Remove any JSON objects that might have slipped through
+        filteredText = filteredText.replace(/\{[\s\S]*?"type":\s*"[^"]*"[\s\S]*?\}/g, '');
+        
+        // Filter technical errors and replace with user-friendly messages
+        if (filteredText.toLowerCase().includes('error:') || filteredText.toLowerCase().includes('failed:') || filteredText.toLowerCase().includes('400') || filteredText.toLowerCase().includes('500')) {
+          filteredText = 'Ha ocurrido un error, intenta nuevamente.';
+        } else {
+          // Filter JQ queries and replace with user-friendly messages
+          const jqPatterns = [
+            { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
+            { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
+            { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
+            { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
+            { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
+            { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
+            { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
+            { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
+            { pattern: /\[\]$/gm, replacement: '' } // Remove empty array results
+          ];
+          
+          jqPatterns.forEach(({ pattern, replacement }) => {
+            filteredText = filteredText.replace(pattern, replacement);
+          });
+          
+          // Filter internal thinking messages
+          const internalPatterns = [
+            /Simplificaré la consulta para evitar errores:?/gi,
+            /Ahora voy a buscar también elementos.*?:/gi,
+            /Ahora voy a analizar también las dimensiones.*?:/gi,
+            /Voy a realizar una búsqueda.*?:/gi,
+            /Let me.*?:/gi,
+            /I'll.*?:/gi,
+            /I will.*?:/gi,
+            /Ahora procederé a.*?:/gi,
+            /Procedemos a.*?:/gi,
+            /A continuación.*?:/gi,
+            /Primero.*?:/gi
+          ];
+          
+          internalPatterns.forEach(pattern => {
+            filteredText = filteredText.replace(pattern, '');
+          });
+        }
+        
+        // Clean up extra whitespace
+        filteredText = filteredText
+          .replace(/\n\s*\n\s*\n/g, '\n\n')
+          .replace(/^\s+|\s+$/gm, '')
+          .trim();
+        
+        // Only update if there's meaningful content after filtering
+        if (filteredText) {
+          setStreamingMessage(prev => prev ? {
+            ...prev,
+            content: filteredText,
+            roundInfo: {
+              round: update.data.round,
+              status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const,
+              toolInfo: update.data.toolCount > 0 ? `Preparando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}` : undefined
+            }
+          } : null);
+        }
         break;
 
       case 'tools_executing':
@@ -329,6 +388,7 @@ function App() {
         break;
 
       case 'materials_extracted':
+        console.log('📋 Materials extracted event received:', update.data.materialsData);
         setStreamingMessage(prev => prev ? {
           ...prev,
           materialsData: update.data.materialsData
@@ -336,6 +396,9 @@ function App() {
         break;
 
       case 'analysis_complete': {
+        console.log('✅ Analysis complete event received. Response length:', update.data.response?.length);
+        console.log('✅ Materials data in analysis_complete:', update.data.materialsData);
+        
         // Finalize the streaming message and add it to messages
         const finalMessage: ChatMessage = {
           role: 'assistant',
@@ -345,8 +408,20 @@ function App() {
           timestamp: new Date(),
           isStreaming: false
         };
+        
+        console.log('📤 Final message being added:', {
+          hasContent: !!finalMessage.content,
+          hasMaterialsData: !!finalMessage.materialsData,
+          materialsDataType: typeof finalMessage.materialsData,
+          materialsDataKeys: finalMessage.materialsData ? Object.keys(finalMessage.materialsData) : 'none'
+        });
+        
         setMessages(prev => [...prev, finalMessage]);
         setStreamingMessage(null);
+        setIsLoading(false); // Enable buttons when analysis is complete
+        
+        // Force scroll to bottom after completing analysis
+        setTimeout(() => scrollToBottom(true), 300);
 
         if (update.data.dwgId) {
           setDwgId(update.data.dwgId);
@@ -360,75 +435,80 @@ function App() {
       case 'error': {
         const errorMessage: ChatMessage = {
           role: 'assistant',
-          content: `Error: ${update.data.error}`,
+          content: 'Ha ocurrido un error, intenta nuevamente.',
           timestamp: new Date(),
         };
         setMessages(prev => [...prev, errorMessage]);
         setStreamingMessage(null);
+        setIsLoading(false); // Enable buttons on error
         break;
       }
     }
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      sendMessage();
-    }
-  };
 
-  // Auto-scroll cuando el usuario empiece a escribir
-  useEffect(() => {
-    if (currentMessage.trim()) {
-      scrollToBottom();
-    }
-  }, [currentMessage, scrollToBottom]);
 
   return (
-    <div className="h-screen bg-gray-900 text-gray-100 flex flex-col">
-      <TopNavbar dwgId={dwgId} sessionId={sessionId} />
-      <AppLayout
-        appPhase={appPhase}
-        viewerReady={viewerReady}
-        urn={urn}
-        dwgViewData={dwgViewData}
-      >
-        <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-900">
-          {isUploadPhase ? (
-            <UploadPrompt
-              onFileUpload={handleFileUpload}
-              fileInputRef={fileInputRef}
-              dwgFile={dwgFile}
-              onUploadAndStart={handleUploadAndStart}
-              isUploading={isLoading}
-            />
-          ) : (
-            <>
-              {messages.map((message, index) => (
-                <MessageBubble key={index} message={message} />
-              ))}
-              {streamingMessage && (
-                <MessageBubble message={streamingMessage} isStreaming />
-              )}
-              {isLoading && <LoadingMessage />}
-            </>
-          )}
-        </div>
-        {!isUploadPhase && (
-          <InputContainer
-            currentMessage={currentMessage}
-            setCurrentMessage={setCurrentMessage}
-            dwgFile={dwgFile}
-            dwgId={dwgId}
+    <div className="h-screen bg-gray-900 text-gray-100 flex flex-col relative">
+      {/* Fixed Top Navbar */}
+      <div className="fixed top-0 left-0 right-0 z-50">
+        <TopNavbar dwgId={dwgId} sessionId={sessionId} />
+      </div>
+      
+      {/* Main content with padding for fixed elements */}
+      <div className="flex-1 pt-24 pb-20">
+        <AppLayout
+          appPhase={appPhase}
+          viewerReady={viewerReady}
+          urn={urn}
+          dwgViewData={dwgViewData}
+        >
+          <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4 bg-gray-900">
+            {isUploadPhase ? (
+              <UploadPrompt
+                onFileUpload={handleFileUpload}
+                fileInputRef={fileInputRef}
+                dwgFile={dwgFile}
+                onUploadAndStart={handleUploadAndStart}
+                isUploading={isLoading}
+              />
+            ) : isProcessingPhase && messages.length === 0 ? (
+              <ActionButtons
+                onActionSelect={handleActionSelect}
+                onFileUpload={handleFileUploadFromActions}
+                isLoading={isLoading}
+                dwgId={dwgId}
+                isCompact={false}
+                savedBoardName={savedBoardName}
+              />
+            ) : (
+              <>
+                {messages.map((message, index) => (
+                  <MessageBubble key={index} message={message} />
+                ))}
+                {streamingMessage && (
+                  <MessageBubble message={streamingMessage} isStreaming />
+                )}
+                {isLoading && <LoadingMessage />}
+              </>
+            )}
+          </div>
+        </AppLayout>
+      </div>
+      
+      {/* Fixed Bottom Action Bar */}
+      {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && (
+        <div className="fixed bottom-0 left-0 right-0 z-50">
+          <ActionButtons
+            onActionSelect={handleActionSelect}
+            onFileUpload={handleFileUploadFromActions}
             isLoading={isLoading}
-            onSendMessage={sendMessage}
-            onKeyDown={handleKeyDown}
-            onFileUpload={handleFileUpload}
-            fileInputRef={fileInputRef}
-            disabled={false}
+            dwgId={dwgId}
+            isCompact={true}
+            savedBoardName={savedBoardName}
           />
-        )}
-      </AppLayout>
+        </div>
+      )}
     </div>
   );
 }

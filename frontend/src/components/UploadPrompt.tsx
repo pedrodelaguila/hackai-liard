@@ -56,7 +56,7 @@ export const UploadPrompt: React.FC<UploadPromptProps> = ({
                 disabled={isUploading}
                 className="w-full mt-3 p-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors duration-200"
               >
-                {isUploading ? 'Subiendo...' : 'Subir e Iniciar Chat'}
+                {isUploading ? 'Subiendo...' : 'Subir e iniciar consultas'}
               </button>
             </div>
           )}

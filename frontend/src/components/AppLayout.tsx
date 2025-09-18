@@ -20,7 +20,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   const showViewer = appPhase === 'ready' && viewerReady && urn;
 
   return (
-    <div className={`flex-1 flex transition-all duration-1000 ${showViewer ? 'gap-4' : ''}`}>
+    <div className={`h-full flex transition-all duration-1000 ${showViewer ? 'gap-4 p-4' : ''}`}>
       <div className={`flex flex-col transition-all duration-1000 ${showViewer ? 'w-1/2' : 'w-full'}`}>
         {children}
       </div>

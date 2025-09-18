@@ -348,7 +348,13 @@ If initial boundary detection misses elements:
  */
 function getOutputFormat(): string {
   return `
-When providing materials lists, format them as JSON with this structure following IRAM standards:
+**CRITICAL RESPONSE FORMAT REQUIREMENT:**
+
+When providing materials lists, you MUST ALWAYS format your response EXACTLY like this:
+
+STEP 1: Provide a brief analysis summary (2-3 sentences maximum)
+STEP 2: End with ONLY the clean JSON object below (no additional text after the JSON)
+
 {
   "type": "materials_list",
   "title": "Materiales para [Board Name] - Según normas IRAM",
@@ -357,10 +363,18 @@ When providing materials lists, format them as JSON with this structure followin
     {"category": "Diferenciales", "description": "DIFERENCIAL 2P40A 30mA (IRAM 2281)", "quantity": 2},
     {"category": "Equipos Especiales", "description": "UPS 8kVA (IRAM Certified)", "quantity": 2},
     {"category": "Gabinetes", "description": "GABINETE ESTANCO IP65 (IRAM)", "quantity": 1}
-  ],
-  "standards_compliance": "All components meet IRAM and Argentine electrical standards",
-  "safety_certifications": "Components require IRAM S-Mark certification where applicable"
-}`;
+  ]
+}
+
+**MANDATORY CONSISTENCY RULES:**
+1. ALWAYS provide the materials list in the JSON format above
+2. NEVER return materials as bullet points, plain text, or any other format
+3. NEVER include incomplete JSON fragments or malformed objects
+4. NEVER mix dwg_view objects with materials_list objects
+5. The JSON must be complete, valid, and parseable on the FIRST response
+6. Do NOT include "highlight", "region", or any other fields in the materials JSON
+7. Separate analysis text from JSON with a blank line
+8. Each item MUST have exactly: "category", "description", "quantity" (no other fields)`;
 }
 
 /**
@@ -419,6 +433,14 @@ function getMandatoryRule(): string {
    - Differential protection device presence
    - Power equipment inventory completeness
 
+**CRITICAL OUTPUT FORMATTING RULES:**
+6. **CLEAN JSON OUTPUT**: End your response with ONLY a clean, valid JSON object
+7. **NO MIXED CONTENT**: Do NOT include explanatory text mixed within or around the final JSON object
+8. **PROPER JSON STRUCTURE**: Ensure the JSON has exactly the required fields and proper syntax
+9. **CLEAR SEPARATION**: If providing explanations, put them BEFORE the final JSON, clearly separated
+10. **MATERIALS LIST CONSISTENCY**: For materials requests, ALWAYS use the materials_list JSON format - NEVER bullet points or plain text
+11. **FIRST RESPONSE QUALITY**: The first response must be as well-formatted as subsequent responses - no exceptions
+
 **IRAM STANDARDS COMPLIANCE REQUIREMENTS:**
 6. **IRAM COMPONENT VALIDATION**: Verify all identified components comply with IRAM standards:
    - Circuit breakers must meet IRAM S-Mark certification requirements
@@ -444,6 +466,66 @@ ALWAYS use the query_dwg tool systematically. Be thorough and methodical but PRI
 }
 
 /**
+ * Budget creation instructions for using existing materials lists
+ */
+function getBudgetInstructions(): string {
+  return `
+
+**INTELLIGENT BUDGET CREATION FROM CONVERSATION HISTORY:**
+
+When a user requests a "presupuesto" (budget) for materials, you MUST follow this priority order:
+
+1. **CHECK CONVERSATION HISTORY FIRST**: Look through the conversation history for any previously extracted materials lists for the same board/tablero mentioned in the request.
+
+2. **REUSE EXISTING MATERIALS LIST**: If you find a materials list in the conversation history that matches the requested board:
+   - Use that existing list as the basis for the budget
+   - DO NOT re-extract materials from the DWG
+   - Directly proceed to create pricing for those materials
+   - Reference the previous extraction: "Basándome en la lista de materiales extraída anteriormente para [board name]..."
+
+3. **EXTRACT NEW LIST ONLY IF NEEDED**: If no suitable materials list exists in the conversation history, then extract a new materials list first.
+
+4. **BUDGET FORMAT REQUIREMENTS - MUST USE PROPER MARKDOWN TABLE**:
+   - Create a well-formatted markdown table with proper syntax
+   - Use this exact structure:
+   
+   | Categoría | Descripción | Cantidad | Precio Unit. (ARS) | Subtotal (ARS) |
+   |-----------|-------------|----------|--------------------|--------------------|
+   | Térmicas  | TÉRMICA 2P25A 4.5KA C | 5 | $12,000 | $60,000 |
+   | Diferenciales | DIFERENCIAL 2P40A 30mA | 2 | $25,000 | $50,000 |
+   
+   - Add summary rows at the end:
+   - **Subtotal Materiales**: $XXX,XXX
+   - **Mano de Obra (18%)**: $XX,XXX  
+   - **TOTAL PROYECTO**: $XXX,XXX
+
+5. **PRICE ESTIMATION GUIDELINES (Argentine Market 2025)**:
+   - TÉRMICA 2P10A-25A: $8,000-$15,000 ARS
+   - TÉRMICA 4P40A-80A: $25,000-$45,000 ARS  
+   - DIFERENCIAL 2P30mA: $18,000-$25,000 ARS
+   - DIFERENCIAL 4P30mA: $35,000-$50,000 ARS
+   - CONTACTORES KM: $12,000-$30,000 ARS
+   - Add 15-20% for installation/labor
+
+**CRITICAL FORMATTING RULE FOR BUDGETS**: 
+- ALWAYS format budget responses using proper markdown table syntax
+- Start with a brief explanation, then present the markdown table
+- Example correct format:
+
+Basándome en los materiales del tablero, aquí está el presupuesto detallado:
+
+| Categoría | Descripción | Cantidad | Precio Unit. (ARS) | Subtotal (ARS) |
+|-----------|-------------|----------|--------------------|--------------------|
+| Térmicas | TÉRMICA 2P25A 4.5KA C | 5 | $12,000 | $60,000 |
+
+**Subtotal Materiales**: $XXX,XXX  
+**Mano de Obra (18%)**: $XX,XXX  
+**TOTAL PROYECTO**: $XXX,XXX
+
+Always check conversation history before doing any DWG queries for budget requests.`;
+}
+
+/**
  * Generate system message for DWG analysis
  */
 export function getDwgAnalysisSystemMessage(options: PromptOptions): string {
@@ -459,6 +541,7 @@ export function getDwgAnalysisSystemMessage(options: PromptOptions): string {
   
   prompt += getCommonMaterialsMapping();
   prompt += getSpecialCharacterHandling();
+  prompt += getBudgetInstructions();
   prompt += getOutputFormat();
   prompt += getDwgViewFormat();
   prompt += getMandatoryRule();

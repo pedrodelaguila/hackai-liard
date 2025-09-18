@@ -34,6 +34,70 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
 }
 
+// Función para filtrar mensajes internos del AI que no deberían mostrarse al usuario
+const filterInternalMessages = (content: string): string => {
+  // Filtrar JSON de dwg_view completo
+  let filtered = content.replace(/\{[\s\S]*?"type":\s*"dwg_view"[\s\S]*?\}/g, '');
+  
+  // Filtrar errores técnicos y reemplazar con mensaje amigable
+  if (filtered.toLowerCase().includes('error:') || filtered.toLowerCase().includes('failed:') || filtered.toLowerCase().includes('400') || filtered.toLowerCase().includes('500')) {
+    // Si contiene información de error técnico, mostrar mensaje amigable
+    if (filtered.toLowerCase().includes('prompt is too long') || filtered.toLowerCase().includes('invalid_request_error')) {
+      return 'Ha ocurrido un error, intenta nuevamente.';
+    }
+    // Para otros errores, también mostrar mensaje genérico amigable
+    return 'Ha ocurrido un error, intenta nuevamente.';
+  }
+  
+  // Filtrar queries JQ y reemplazar con mensajes amigables
+  const jqPatterns = [
+    { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
+    { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
+    { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
+    { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
+    { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
+    { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
+    { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
+    { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
+    { pattern: /\[\]$/gm, replacement: '' }, // Remove empty array results
+    // Remove any remaining JSON objects that contain materials or items
+    { pattern: /\{[\s\S]*?"(type|title|items|category|description|quantity)"[\s\S]*?\}/gi, replacement: '' },
+    // Remove JSON arrays 
+    { pattern: /\[[\s\S]*?\{[\s\S]*?"(category|description|quantity)"[\s\S]*?\][\s\S]*/gi, replacement: '' }
+  ];
+  
+  jqPatterns.forEach(({ pattern, replacement }) => {
+    filtered = filtered.replace(pattern, replacement);
+  });
+  
+  // Filtrar mensajes de pensamiento interno comunes
+  const internalPatterns = [
+    /Simplificaré la consulta para evitar errores:?/gi,
+    /Ahora voy a buscar también elementos.*?:/gi,
+    /Ahora voy a analizar también las dimensiones.*?:/gi,
+    /Voy a realizar una búsqueda.*?:/gi,
+    /Let me.*?:/gi,
+    /I'll.*?:/gi,
+    /I will.*?:/gi,
+    /Ahora procederé a.*?:/gi,
+    /Procedemos a.*?:/gi,
+    /A continuación.*?:/gi,
+    /Primero.*?:/gi
+  ];
+  
+  internalPatterns.forEach(pattern => {
+    filtered = filtered.replace(pattern, '');
+  });
+  
+  // Limpiar líneas vacías múltiples y espacios extra
+  filtered = filtered
+    .replace(/\n\s*\n\s*\n/g, '\n\n') // Múltiples saltos de línea
+    .replace(/^\s+|\s+$/gm, '') // Espacios al inicio/final de líneas
+    .trim();
+    
+  return filtered;
+};
+
 // Componente para texto con efecto typewriter
 const TypewriterText: React.FC<{ content: string; role: string }> = ({ content, role }) => {
   const { displayedText, isTyping } = useTypewriter({
@@ -57,6 +121,24 @@ const TypewriterText: React.FC<{ content: string; role: string }> = ({ content, 
 };
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreaming = false }) => {
+  // Log para debug - más detallado
+  console.log('🔍 MessageBubble: Rendering message', {
+    role: message.role,
+    contentLength: message.content?.length,
+    hasMaterialsData: !!message.materialsData,
+    isStreaming,
+    materialsDataStructure: message.materialsData ? {
+      type: message.materialsData.type,
+      title: message.materialsData.title,
+      itemsCount: message.materialsData.items?.length,
+      firstItem: message.materialsData.items?.[0]
+    } : null
+  });
+  
+  if (message.materialsData) {
+    console.log('🎯 MessageBubble: FULL materials data:', JSON.stringify(message.materialsData, null, 2));
+  }
+  
   return (
     <div className={`flex gap-3 animate-fadeIn ${
       message.role === 'user' ? 'justify-end' : 'justify-start'
@@ -109,27 +191,144 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreami
         )}
 
         <div className="leading-relaxed">
-          {message.materialsData ? (
-            <>
-              <div className="mb-4">
-                {message.content.replace(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/, '').trim()}
-              </div>
-              <MaterialsList materialsData={message.materialsData} />
-            </>
-          ) : (
-            // Usar efecto typewriter solo para respuestas del asistente que NO están en streaming
-            message.role === 'assistant' && !isStreaming ? (
-              <TypewriterText content={message.content} role={message.role} />
-            ) : (
-              <div className={`prose prose-sm max-w-none ${
-                message.role === 'user' 
-                  ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
-                  : 'text-gray-100 prose-headings:text-gray-200 prose-strong:text-gray-200 prose-code:bg-gray-700 prose-code:text-gray-200 prose-pre:bg-gray-700 prose-pre:text-gray-200 prose-table:border-gray-600'
-              }`}>
-                <MarkdownWithExport content={message.content} />
-              </div>
-            )
-          )}
+          {(() => {
+            // Check if content contains materials JSON that should be extracted
+            let extractedMaterialsData = null;
+            
+            try {
+              // First clean up the content to remove malformed fragments
+              const cleanContent = message.content
+                .replace(/"\s*highlight"\s*:\s*\[\s*\]\s*\}/g, '') // Remove malformed highlight fragments
+                .replace(/\{\s*,/g, '{') // Fix malformed JSON starting with comma
+                .replace(/,\s*\}/g, '}'); // Fix trailing commas
+              
+              // Look for materials_list JSON in content - most specific patterns first
+              let materialsMatch = cleanContent.match(/\{\s*"type":\s*"materials_list"[\s\S]*?\}/);
+              
+              // Try to find JSON at the end of the content
+              if (!materialsMatch) {
+                materialsMatch = cleanContent.match(/\{\s*"type":\s*"materials_list"[\s\S]*?\}\s*$/);
+              }
+              
+              // Look for any JSON with items array and materials structure
+              if (!materialsMatch) {
+                materialsMatch = cleanContent.match(/\{[\s\S]*?"items":\s*\[\s*\{[\s\S]*?"category"[\s\S]*?\}\s*\][\s\S]*?\}/);
+              }
+              
+              // Try parsing line by line from the end (for cases where JSON is split across lines)
+              if (!materialsMatch) {
+                const lines = cleanContent.split('\n');
+                let jsonStr = '';
+                let braceCount = 0;
+                let foundStart = false;
+                
+                for (let i = lines.length - 1; i >= 0; i--) {
+                  const line = lines[i];
+                  if (line.includes('"type"') && line.includes('"materials_list"')) {
+                    foundStart = true;
+                  }
+                  if (foundStart) {
+                    jsonStr = line + '\n' + jsonStr;
+                    for (const char of line) {
+                      if (char === '{') braceCount++;
+                      if (char === '}') braceCount--;
+                    }
+                    if (braceCount === 0 && jsonStr.includes('"type"')) {
+                      materialsMatch = [jsonStr.trim()];
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              if (materialsMatch) {
+                let jsonStr = materialsMatch[0].trim();
+                
+                // Additional cleanup
+                jsonStr = jsonStr
+                  .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+                  .replace(/}\s*{/g, '},{'); // Fix missing commas between objects
+                  
+                console.log('🔍 Raw materials match found:', jsonStr.substring(0, 200) + '...');
+                
+                const materialsJSON = JSON.parse(jsonStr);
+                console.log('🔍 Parsed materials JSON:', materialsJSON);
+                
+                // Validate the structure
+                if (materialsJSON && 
+                    (materialsJSON.type === 'materials_list' || materialsJSON.items) && 
+                    Array.isArray(materialsJSON.items) &&
+                    materialsJSON.items.length > 0) {
+                  
+                  // Normalize and validate the structure
+                  extractedMaterialsData = {
+                    type: 'materials_list' as const,
+                    title: materialsJSON.title || 'Lista de Materiales',
+                    items: materialsJSON.items.filter((item: MaterialItem) => 
+                      item.category && item.description && typeof item.quantity === 'number'
+                    )
+                  };
+                  
+                  // Only use if we have valid items
+                  if (extractedMaterialsData.items.length > 0) {
+                    console.log('🎯 Extracted and normalized materials data:', extractedMaterialsData);
+                  } else {
+                    extractedMaterialsData = null;
+                    console.log('❌ No valid items found in materials data');
+                  }
+                }
+              }
+            } catch (error) {
+              console.log('❌ Error parsing materials JSON:', error);
+              console.log('Content being parsed:', message.content.substring(0, 500) + '...');
+            }
+            
+            // Use materialsData prop or extracted from content
+            const materialDataToUse = message.materialsData || extractedMaterialsData;
+            
+            if (materialDataToUse) {
+              console.log('📋 MessageBubble: Rendering with materials data:', materialDataToUse);
+              return (
+                <>
+                  <div className="mb-4">
+                    {(() => {
+                      let filtered = message.content;
+                      
+                      // Remove various patterns of materials JSON
+                      filtered = filtered
+                        .replace(/\{[\s\S]*?"type":\s*"materials_list"[\s\S]*?\}/g, '')
+                        .replace(/\{[\s\S]*?"type":\s*"dwg_view"[\s\S]*?\}/g, '')
+                        .replace(/\{[\s\S]*?"title":\s*"Materials[\s\S]*?\}/g, '')
+                        .replace(/\{[\s\S]*?"items":\s*\[[\s\S]*?"category"[\s\S]*?\]/g, '')
+                        .replace(/^\s*\{[\s\S]*?\}\s*$/gm, '') // Remove any standalone JSON objects
+                        .trim();
+                      
+                      const cleanContent = filterInternalMessages(filtered);
+                      
+                      // Only show content if it has meaningful text after cleaning
+                      return cleanContent.length > 20 ? cleanContent : '';
+                    })()}
+                  </div>
+                  <MaterialsList materialsData={materialDataToUse} />
+                </>
+              );
+            }
+            
+            return (
+              // Usar efecto typewriter solo para respuestas del asistente que NO están en streaming
+              message.role === 'assistant' && !isStreaming ? (
+                <TypewriterText content={filterInternalMessages(message.content)} role={message.role} />
+              ) : (
+                <div className={`prose prose-sm max-w-none ${
+                  message.role === 'user' 
+                    ? 'prose-invert text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-pre:bg-white/10 prose-pre:text-white prose-table:border-white/20' 
+                    : 'text-gray-100 prose-headings:text-gray-200 prose-strong:text-gray-200 prose-code:bg-gray-700 prose-code:text-gray-200 prose-pre:bg-gray-700 prose-pre:text-gray-200 prose-table:border-gray-600'
+                }`}>
+                  <MarkdownWithExport content={filterInternalMessages(message.content)} />
+                </div>
+              )
+            );
+          })()}
         </div>
 
         {isStreaming && (

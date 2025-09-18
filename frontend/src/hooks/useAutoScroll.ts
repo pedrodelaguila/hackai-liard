@@ -54,8 +54,8 @@ export const useAutoScroll = ({
   // Auto-scroll cuando cambie la dependencia (ej. nuevos mensajes)
   useEffect(() => {
     if (dependency !== undefined) {
-      // Pequeño delay para permitir que el DOM se actualice
-      setTimeout(() => scrollToBottom(), 100);
+      // Delay más largo para permitir que el DOM se actualice completamente
+      setTimeout(() => scrollToBottom(true), 200);
     }
   }, [dependency, scrollToBottom]);
 
