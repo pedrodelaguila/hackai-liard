@@ -3,7 +3,6 @@ import React from 'react';
 interface ProcessingMessageProps {
   isProcessing: boolean;
   isLargeFile: boolean;
-  isViewerReadyButHidden: boolean;
 }
 
 // Subcomponent for processing state
@@ -22,23 +21,6 @@ const ProcessingViewer: React.FC = () => (
   </div>
 );
 
-// Subcomponent for viewer ready but hidden state
-const ViewerReady: React.FC = () => (
-  <div className="flex items-center gap-3">
-    <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-    </svg>
-    <div className="text-sm">
-      <span className="text-green-300 font-medium">
-        Tu visualización está lista
-      </span>
-      <br />
-      <span className="text-green-400/80">
-        La mostraremos junto a tu primera consulta
-      </span>
-    </div>
-  </div>
-);
 
 // Subcomponent for large file notification
 const LargeFileNotification: React.FC = () => (
@@ -61,20 +43,18 @@ const LargeFileNotification: React.FC = () => (
 // Main component
 export const ProcessingMessage: React.FC<ProcessingMessageProps> = ({
   isProcessing,
-  isLargeFile,
-  isViewerReadyButHidden
+  isLargeFile
 }) => {
   // Don't show anything if no relevant state is active
-  if (!isProcessing && !isViewerReadyButHidden && !isLargeFile) {
+  if (!isProcessing && !isLargeFile) {
     return null;
   }
 
   return (
-    <div className="fixed top-20 left-0 right-0 z-40 flex justify-center">
-      <div className="bg-gray-800/90 border border-gray-600/50 rounded-lg px-4 py-3 mx-4 backdrop-blur-sm shadow-lg">
+    <div className="fixed top-24 left-0 right-0 z-30 flex justify-center pointer-events-none">
+      <div className="bg-gray-800/90 border border-gray-600/50 rounded-lg px-4 py-3 mx-4 backdrop-blur-sm shadow-lg pointer-events-auto">
         {isProcessing && <ProcessingViewer />}
-        {isViewerReadyButHidden && !isProcessing && <ViewerReady />}
-        {isLargeFile && !isProcessing && !isViewerReadyButHidden && <LargeFileNotification />}
+        {isLargeFile && !isProcessing && <LargeFileNotification />}
       </div>
     </div>
   );

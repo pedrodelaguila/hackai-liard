@@ -26,27 +26,15 @@ function App() {
   const [dwgViewData, setDwgViewData] = useState<any>(null);
   const [savedBoardName, setSavedBoardName] = useState<string>('');
   const [isProcessingViewer, setIsProcessingViewer] = useState<boolean>(false);
-  const [isViewerReadyButHidden, setIsViewerReadyButHidden] = useState<boolean>(false);
   const [isLargeFile, setIsLargeFile] = useState<boolean>(false);
+  const [fileCharacteristics, setFileCharacteristics] = useState<{isLarge: boolean, hasUrn: boolean}>({isLarge: false, hasUrn: false});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { appPhase, viewerReady, moveToProcessing, moveToReady, isUploadPhase, isProcessingPhase } = useAppPhases();
   const handleViewerReady = useCallback(() => {
     setIsProcessingViewer(false);
-
-    // If no messages yet or user hasn't started interacting, mark viewer as ready but hidden
-    if (messages.length === 0 || (messages.length === 1 && messages[0].content.includes('preparando'))) {
-      setIsViewerReadyButHidden(true);
-      // Update the last message to indicate viewer is ready
-      setMessages([{
-        role: 'assistant',
-        content: 'Tu visualización está lista. La mostraremos junto a tu primera consulta.',
-        timestamp: new Date()
-      }]);
-    }
-
     moveToReady();
-  }, [messages.length, moveToReady]);
+  }, [moveToReady]);
 
   const { pollTranslationStatus } = useTranslationPolling(handleViewerReady);
 
@@ -56,12 +44,12 @@ function App() {
 
     if (urn) {
       setUrn(urn);
-      setIsProcessingViewer(true);
+      setFileCharacteristics({isLarge: false, hasUrn: true});
       console.log('Starting translation polling for URN:', urn);
       pollTranslationStatus(urn); // This will call moveToReady() when translation completes
     } else {
       console.log('No URN returned, viewer will not be available');
-      setIsLargeFile(true);
+      setFileCharacteristics({isLarge: true, hasUrn: false});
     }
   };
 
@@ -79,21 +67,28 @@ function App() {
 
     // Reset processing states
     setIsProcessingViewer(false);
-    setIsViewerReadyButHidden(false);
     setIsLargeFile(false);
+    setFileCharacteristics({isLarge: false, hasUrn: false});
 
     await uploadDwg(file);
+  };
+
+  const handleBoardNameAccepted = (boardName: string) => {
+    // Save the board name
+    setSavedBoardName(boardName);
+
+    // Now that user has accepted board name, show appropriate processing messages
+    if (fileCharacteristics.isLarge) {
+      setIsLargeFile(true);
+    } else if (urn && !viewerReady) {
+      setIsProcessingViewer(true);
+    }
   };
 
   const handleActionSelect = async (prompt: string, boardName?: string) => {
     // Save board name if provided (from first use or update existing)
     if (boardName) {
       setSavedBoardName(boardName);
-    }
-
-    // If viewer was ready but hidden, now it will show
-    if (isViewerReadyButHidden) {
-      setIsViewerReadyButHidden(false);
     }
 
     // Add user message immediately
@@ -238,22 +233,18 @@ function App() {
         setDwgId(update.data.dwgId);
         moveToProcessing();
 
-        // Check if it's a large file message
+        // Store file characteristics but don't show processing messages yet
         if (update.data.message && update.data.message.includes('large') && update.data.message.includes('MB')) {
-          setIsLargeFile(true);
-          setMessages([{
-            role: 'assistant',
-            content: 'DWG cargado exitosamente. El archivo es grande, por lo que no habrá visualización disponible, pero todas las consultas funcionan normalmente.',
-            timestamp: new Date()
-          }]);
+          setFileCharacteristics({isLarge: true, hasUrn: false});
         } else {
-          setIsProcessingViewer(true);
-          setMessages([{
-            role: 'assistant',
-            content: 'DWG cargado exitosamente. Estamos preparando la visualización...',
-            timestamp: new Date()
-          }]);
+          setFileCharacteristics({isLarge: false, hasUrn: !!urn});
         }
+
+        setMessages([{
+          role: 'assistant',
+          content: 'DWG cargado exitosamente. ¿Qué análisis te gustaría realizar?',
+          timestamp: new Date()
+        }]);
         setStreamingMessage(null);
         break;
 
@@ -495,14 +486,13 @@ function App() {
       <ProcessingMessage
         isProcessing={isProcessingViewer}
         isLargeFile={isLargeFile}
-        isViewerReadyButHidden={isViewerReadyButHidden}
       />
 
       {/* Main content area */}
       <div className="flex-1 min-h-0">
         <AppLayout
           appPhase={appPhase}
-          viewerReady={viewerReady && !isViewerReadyButHidden}
+          viewerReady={viewerReady}
           urn={urn}
           dwgViewData={dwgViewData}
         >
@@ -516,10 +506,11 @@ function App() {
                   onUploadAndStart={handleUploadAndStart}
                   isUploading={isLoading}
                 />
-              ) : !isUploadPhase && messages.length === 0 && !savedBoardName ? (
+              ) : !isUploadPhase && messages.length === 0 ? (
                 <ActionButtons
                   onActionSelect={handleActionSelect}
                   onFileUpload={handleFileUploadFromActions}
+                  onBoardNameAccepted={handleBoardNameAccepted}
                   isLoading={isLoading}
                   dwgId={dwgId}
                   isCompact={false}

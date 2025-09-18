@@ -3,6 +3,7 @@ import React, { useState, useRef } from 'react';
 interface ActionButtonsProps {
   onActionSelect: (prompt: string, boardName?: string) => void;
   onFileUpload: (file: File) => Promise<void>;
+  onBoardNameAccepted?: (boardName: string) => void;
   isLoading: boolean;
   dwgId?: string | null;
   isCompact?: boolean;
@@ -55,10 +56,11 @@ const actions = [
   }
 ];
 
-export const ActionButtons: React.FC<ActionButtonsProps> = ({ 
-  onActionSelect, 
-  onFileUpload, 
-  isLoading, 
+export const ActionButtons: React.FC<ActionButtonsProps> = ({
+  onActionSelect,
+  onFileUpload,
+  onBoardNameAccepted,
+  isLoading,
   dwgId,
   isCompact = false,
   savedBoardName = ''
@@ -75,6 +77,8 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
   const handleAcceptBoardName = () => {
     if (boardName.trim()) {
       setIsAccepted(true);
+      // Notify parent component that board name was accepted
+      onBoardNameAccepted?.(boardName.trim());
     }
   };
 
