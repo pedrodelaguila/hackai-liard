@@ -30,7 +30,7 @@ const port = process.env.PORT || 4000;
 // CORS configuration for Vercel frontend
 const corsOptions = {
   origin: [
-    process.env.FRONTEND_URL || 'http://localhost:3000', // Development
+    process.env.VITE_DEV_URL || 'http://localhost:5173', // Vite dev server
     /^https:\/\/.*\.vercel\.app$/, // Vercel deployments
     /^https:\/\/.*\.vercel\.com$/, // Alternative Vercel domain
   ],
@@ -49,7 +49,7 @@ const upload = multer({ storage });
 
 // Environment variables
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const DWG_PARSER_URL = process.env.DWG_PARSER_URL || 'http://localhost:3000';
+const DWG_PARSER_URL = process.env.DWG_PARSER_URL || (process.env.NODE_ENV === 'production' ? 'http://dwg-parser:3000' : 'http://localhost:3000');
 
 if (!ANTHROPIC_API_KEY) {
   console.error('ANTHROPIC_API_KEY environment variable is required');
