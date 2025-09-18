@@ -22,7 +22,7 @@ const swaggerOptions = {
     },
     servers: [
       {
-        url: `http://localhost:${port}`,
+        url: process.env.SWAGGER_URL || `http://localhost:${port}`,
       },
     ],
   },

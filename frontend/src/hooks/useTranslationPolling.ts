@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-const BACKEND_URL = 'http://localhost:4000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 
 export const useTranslationPolling = (onComplete: () => void) => {
   const pollTranslationStatus = useCallback(async (urn: string) => {
