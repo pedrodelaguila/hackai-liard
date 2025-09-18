@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import './App.css';
 import { TopNavbar } from './components/TopNavbar';
 import { MessageBubble } from './components/MessageBubble';
@@ -6,6 +6,7 @@ import { LoadingMessage } from './components/LoadingMessage';
 import { AppLayout } from './components/AppLayout';
 import { UploadPrompt } from './components/UploadPrompt';
 import { ActionButtons } from './components/ActionButtons';
+import { ProcessingMessage } from './components/ProcessingMessage';
 import type { ChatMessage, StreamUpdate } from './types';
 import { useAutoScroll } from './hooks/useAutoScroll';
 import { useAppPhases } from './hooks/useAppPhases';
@@ -24,10 +25,18 @@ function App() {
   const [urn, setUrn] = useState<string | null>(null);
   const [dwgViewData, setDwgViewData] = useState<any>(null);
   const [savedBoardName, setSavedBoardName] = useState<string>('');
+  const [isProcessingViewer, setIsProcessingViewer] = useState<boolean>(false);
+  const [isLargeFile, setIsLargeFile] = useState<boolean>(false);
+  const [fileCharacteristics, setFileCharacteristics] = useState<{isLarge: boolean, hasUrn: boolean}>({isLarge: false, hasUrn: false});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { appPhase, viewerReady, moveToProcessing, moveToReady, isUploadPhase, isProcessingPhase } = useAppPhases();
-  const { pollTranslationStatus } = useTranslationPolling(moveToReady);
+  const handleViewerReady = useCallback(() => {
+    setIsProcessingViewer(false);
+    moveToReady();
+  }, [moveToReady]);
+
+  const { pollTranslationStatus } = useTranslationPolling(handleViewerReady);
 
   const handleDwgUploadComplete = (dwgId: string, urn?: string) => {
     setDwgId(dwgId);
@@ -35,10 +44,12 @@ function App() {
 
     if (urn) {
       setUrn(urn);
+      setFileCharacteristics({isLarge: false, hasUrn: true});
       console.log('Starting translation polling for URN:', urn);
       pollTranslationStatus(urn); // This will call moveToReady() when translation completes
     } else {
       console.log('No URN returned, viewer will not be available');
+      setFileCharacteristics({isLarge: true, hasUrn: false});
     }
   };
 
@@ -53,16 +64,33 @@ function App() {
     setUrn(null);
     setDwgViewData(null);
     setSavedBoardName(''); // Reset saved board name
-    
+
+    // Reset processing states
+    setIsProcessingViewer(false);
+    setIsLargeFile(false);
+    setFileCharacteristics({isLarge: false, hasUrn: false});
+
     await uploadDwg(file);
   };
 
+  const handleBoardNameAccepted = (boardName: string) => {
+    // Save the board name
+    setSavedBoardName(boardName);
+
+    // Now that user has accepted board name, show appropriate processing messages
+    if (fileCharacteristics.isLarge) {
+      setIsLargeFile(true);
+    } else if (urn && !viewerReady) {
+      setIsProcessingViewer(true);
+    }
+  };
+
   const handleActionSelect = async (prompt: string, boardName?: string) => {
-    // Save board name if provided (from first use)
-    if (boardName && !savedBoardName) {
+    // Save board name if provided (from first use or update existing)
+    if (boardName) {
       setSavedBoardName(boardName);
     }
-    
+
     // Add user message immediately
     const userMessage: ChatMessage = {
       role: 'user',
@@ -204,9 +232,17 @@ function App() {
       case 'dwg_uploaded':
         setDwgId(update.data.dwgId);
         moveToProcessing();
+
+        // Store file characteristics but don't show processing messages yet
+        if (update.data.message && update.data.message.includes('large') && update.data.message.includes('MB')) {
+          setFileCharacteristics({isLarge: true, hasUrn: false});
+        } else {
+          setFileCharacteristics({isLarge: false, hasUrn: !!urn});
+        }
+
         setMessages([{
           role: 'assistant',
-          content: 'DWG uploaded! Preparing viewer... You can ask questions now.',
+          content: 'DWG cargado exitosamente. ¿Qué análisis te gustaría realizar?',
           timestamp: new Date()
         }]);
         setStreamingMessage(null);
@@ -396,9 +432,6 @@ function App() {
         break;
 
       case 'analysis_complete': {
-        console.log('✅ Analysis complete event received. Response length:', update.data.response?.length);
-        console.log('✅ Materials data in analysis_complete:', update.data.materialsData);
-        
         // Finalize the streaming message and add it to messages
         const finalMessage: ChatMessage = {
           role: 'assistant',
@@ -408,14 +441,8 @@ function App() {
           timestamp: new Date(),
           isStreaming: false
         };
-        
-        console.log('📤 Final message being added:', {
-          hasContent: !!finalMessage.content,
-          hasMaterialsData: !!finalMessage.materialsData,
-          materialsDataType: typeof finalMessage.materialsData,
-          materialsDataKeys: finalMessage.materialsData ? Object.keys(finalMessage.materialsData) : 'none'
-        });
-        
+
+        console.log('DEBUG: Final budget message content:', finalMessage.content);
         setMessages(prev => [...prev, finalMessage]);
         setStreamingMessage(null);
         setIsLoading(false); // Enable buttons when analysis is complete
@@ -449,56 +476,65 @@ function App() {
 
 
   return (
-    <div className="h-screen bg-gray-900 text-gray-100 flex flex-col relative">
+    <div className="h-screen bg-gray-900 text-gray-100 flex flex-col overflow-hidden">
       {/* Fixed Top Navbar */}
-      <div className="fixed top-0 left-0 right-0 z-50">
+      <div className="flex-shrink-0 z-50">
         <TopNavbar dwgId={dwgId} sessionId={sessionId} />
       </div>
-      
-      {/* Main content with padding for fixed elements */}
-      <div className="flex-1 pt-24 pb-20">
+
+      {/* Processing Message */}
+      <ProcessingMessage
+        isProcessing={isProcessingViewer}
+        isLargeFile={isLargeFile}
+      />
+
+      {/* Main content area */}
+      <div className="flex-1 min-h-0">
         <AppLayout
           appPhase={appPhase}
           viewerReady={viewerReady}
           urn={urn}
           dwgViewData={dwgViewData}
         >
-          <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4 bg-gray-900">
-            {isUploadPhase ? (
-              <UploadPrompt
-                onFileUpload={handleFileUpload}
-                fileInputRef={fileInputRef}
-                dwgFile={dwgFile}
-                onUploadAndStart={handleUploadAndStart}
-                isUploading={isLoading}
-              />
-            ) : isProcessingPhase && messages.length === 0 ? (
-              <ActionButtons
-                onActionSelect={handleActionSelect}
-                onFileUpload={handleFileUploadFromActions}
-                isLoading={isLoading}
-                dwgId={dwgId}
-                isCompact={false}
-                savedBoardName={savedBoardName}
-              />
-            ) : (
-              <>
-                {messages.map((message, index) => (
-                  <MessageBubble key={index} message={message} />
-                ))}
-                {streamingMessage && (
-                  <MessageBubble message={streamingMessage} isStreaming />
-                )}
-                {isLoading && <LoadingMessage />}
-              </>
-            )}
+          <div className="h-full flex flex-col">
+            <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {isUploadPhase ? (
+                <UploadPrompt
+                  onFileUpload={handleFileUpload}
+                  fileInputRef={fileInputRef}
+                  dwgFile={dwgFile}
+                  onUploadAndStart={handleUploadAndStart}
+                  isUploading={isLoading}
+                />
+              ) : !isUploadPhase && messages.length === 0 ? (
+                <ActionButtons
+                  onActionSelect={handleActionSelect}
+                  onFileUpload={handleFileUploadFromActions}
+                  onBoardNameAccepted={handleBoardNameAccepted}
+                  isLoading={isLoading}
+                  dwgId={dwgId}
+                  isCompact={false}
+                  savedBoardName={savedBoardName}
+                />
+              ) : (
+                <>
+                  {messages.map((message, index) => (
+                    <MessageBubble key={index} message={message} />
+                  ))}
+                  {streamingMessage && (
+                    <MessageBubble message={streamingMessage} isStreaming />
+                  )}
+                  {isLoading && <LoadingMessage />}
+                </>
+              )}
+            </div>
           </div>
         </AppLayout>
       </div>
-      
-      {/* Fixed Bottom Action Bar */}
-      {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && (
-        <div className="fixed bottom-0 left-0 right-0 z-50">
+
+      {/* Fixed Bottom Action Bar - only show if we have a saved board name */}
+      {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && savedBoardName && (
+        <div className="flex-shrink-0 z-50">
           <ActionButtons
             onActionSelect={handleActionSelect}
             onFileUpload={handleFileUploadFromActions}

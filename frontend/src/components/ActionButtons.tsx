@@ -3,6 +3,7 @@ import React, { useState, useRef } from 'react';
 interface ActionButtonsProps {
   onActionSelect: (prompt: string, boardName?: string) => void;
   onFileUpload: (file: File) => Promise<void>;
+  onBoardNameAccepted?: (boardName: string) => void;
   isLoading: boolean;
   dwgId?: string | null;
   isCompact?: boolean;
@@ -55,10 +56,11 @@ const actions = [
   }
 ];
 
-export const ActionButtons: React.FC<ActionButtonsProps> = ({ 
-  onActionSelect, 
-  onFileUpload, 
-  isLoading, 
+export const ActionButtons: React.FC<ActionButtonsProps> = ({
+  onActionSelect,
+  onFileUpload,
+  onBoardNameAccepted,
+  isLoading,
   dwgId,
   isCompact = false,
   savedBoardName = ''
@@ -75,13 +77,15 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
   const handleAcceptBoardName = () => {
     if (boardName.trim()) {
       setIsAccepted(true);
+      // Notify parent component that board name was accepted
+      onBoardNameAccepted?.(boardName.trim());
     }
   };
 
   const handleActionClick = (action: typeof actions[0]) => {
     // In compact mode, use savedBoardName or prompt for it
     const boardToUse = isCompact ? savedBoardName : boardName;
-    
+
     if (!isCompact && (!isAccepted || !boardName.trim())) return;
     if (isCompact && !boardToUse.trim()) {
       alert('Por favor especifica primero el nombre del tablero usando el modo completo.');
@@ -95,7 +99,8 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
     }
     
     const prompt = action.prompt(boardToUse);
-    onActionSelect(prompt, isCompact ? undefined : boardToUse);
+    // Always pass boardToUse so it gets saved, except when in compact mode and we already have a saved name
+    onActionSelect(prompt, !isCompact ? boardToUse : undefined);
   };
 
   const handleCustomSubmit = () => {
@@ -105,7 +110,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
     const specificAction = actions.find(a => a.id === 'specific');
     if (specificAction) {
       const prompt = specificAction.prompt(boardToUse, customQuery);
-      onActionSelect(prompt, isCompact ? undefined : boardToUse);
+      onActionSelect(prompt, !isCompact ? boardToUse : undefined);
     }
     setShowCustomInput(false);
     setCustomQuery('');
@@ -332,7 +337,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
 
   return (
     <div className="min-h-[70vh] flex items-center justify-center p-4">
-      <div className="text-center max-w-lg px-4 w-full">
+      <div className="text-center max-w-lg px-4 w-full mt-16">
         <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mb-6 mx-auto">
           <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />

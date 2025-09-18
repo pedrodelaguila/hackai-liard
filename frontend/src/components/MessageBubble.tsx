@@ -38,9 +38,17 @@ interface MessageBubbleProps {
 const filterInternalMessages = (content: string): string => {
   // Filtrar JSON de dwg_view completo
   let filtered = content.replace(/\{[\s\S]*?"type":\s*"dwg_view"[\s\S]*?\}/g, '');
-  
-  // Filtrar errores técnicos y reemplazar con mensaje amigable
-  if (filtered.toLowerCase().includes('error:') || filtered.toLowerCase().includes('failed:') || filtered.toLowerCase().includes('400') || filtered.toLowerCase().includes('500')) {
+
+  // Don't filter content that looks like budget tables (contains table headers)
+  const hasBudgetContent = filtered.includes('|') && (
+    filtered.includes('Material') ||
+    filtered.includes('Cantidad') ||
+    filtered.includes('Precio') ||
+    filtered.includes('Total')
+  );
+
+  // Filtrar errores técnicos y reemplazar con mensaje amigable - but preserve budget tables
+  if (!hasBudgetContent && (filtered.toLowerCase().includes('error:') || filtered.toLowerCase().includes('failed:') || filtered.toLowerCase().includes('400') || filtered.toLowerCase().includes('500'))) {
     // Si contiene información de error técnico, mostrar mensaje amigable
     if (filtered.toLowerCase().includes('prompt is too long') || filtered.toLowerCase().includes('invalid_request_error')) {
       return 'Ha ocurrido un error, intenta nuevamente.';
@@ -49,45 +57,51 @@ const filterInternalMessages = (content: string): string => {
     return 'Ha ocurrido un error, intenta nuevamente.';
   }
   
-  // Filtrar queries JQ y reemplazar con mensajes amigables
-  const jqPatterns = [
-    { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
-    { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
-    { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
-    { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
-    { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
-    { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
-    { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
-    { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
-    { pattern: /\[\]$/gm, replacement: '' }, // Remove empty array results
-    // Remove any remaining JSON objects that contain materials or items
-    { pattern: /\{[\s\S]*?"(type|title|items|category|description|quantity)"[\s\S]*?\}/gi, replacement: '' },
-    // Remove JSON arrays 
-    { pattern: /\[[\s\S]*?\{[\s\S]*?"(category|description|quantity)"[\s\S]*?\][\s\S]*/gi, replacement: '' }
-  ];
+  // Only apply JQ filtering if this is not budget content
+  if (!hasBudgetContent) {
+    // Filtrar queries JQ y reemplazar con mensajes amigables
+    const jqPatterns = [
+      { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
+      { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
+      { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
+      { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
+      { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
+      { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
+      { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
+      { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
+      { pattern: /\[\]$/gm, replacement: '' }, // Remove empty array results
+      // Remove any remaining JSON objects that contain materials or items
+      { pattern: /\{[\s\S]*?"(type|title|items|category|description|quantity)"[\s\S]*?\}/gi, replacement: '' },
+      // Remove JSON arrays
+      { pattern: /\[[\s\S]*?\{[\s\S]*?"(category|description|quantity)"[\s\S]*?\][\s\S]*/gi, replacement: '' }
+    ];
+
+    jqPatterns.forEach(({ pattern, replacement }) => {
+      filtered = filtered.replace(pattern, replacement);
+    });
+  }
   
-  jqPatterns.forEach(({ pattern, replacement }) => {
-    filtered = filtered.replace(pattern, replacement);
-  });
-  
-  // Filtrar mensajes de pensamiento interno comunes
-  const internalPatterns = [
-    /Simplificaré la consulta para evitar errores:?/gi,
-    /Ahora voy a buscar también elementos.*?:/gi,
-    /Ahora voy a analizar también las dimensiones.*?:/gi,
-    /Voy a realizar una búsqueda.*?:/gi,
-    /Let me.*?:/gi,
-    /I'll.*?:/gi,
-    /I will.*?:/gi,
-    /Ahora procederé a.*?:/gi,
-    /Procedemos a.*?:/gi,
-    /A continuación.*?:/gi,
-    /Primero.*?:/gi
-  ];
-  
-  internalPatterns.forEach(pattern => {
-    filtered = filtered.replace(pattern, '');
-  });
+  // Only apply internal pattern filtering if this is not budget content
+  if (!hasBudgetContent) {
+    // Filtrar mensajes de pensamiento interno comunes
+    const internalPatterns = [
+      /Simplificaré la consulta para evitar errores:?/gi,
+      /Ahora voy a buscar también elementos.*?:/gi,
+      /Ahora voy a analizar también las dimensiones.*?:/gi,
+      /Voy a realizar una búsqueda.*?:/gi,
+      /Let me.*?:/gi,
+      /I'll.*?:/gi,
+      /I will.*?:/gi,
+      /Ahora procederé a.*?:/gi,
+      /Procedemos a.*?:/gi,
+      /A continuación.*?:/gi,
+      /Primero.*?:/gi
+    ];
+
+    internalPatterns.forEach(pattern => {
+      filtered = filtered.replace(pattern, '');
+    });
+  }
   
   // Limpiar líneas vacías múltiples y espacios extra
   filtered = filtered
@@ -281,6 +295,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreami
             } catch (error) {
               console.log('❌ Error parsing materials JSON:', error);
               console.log('Content being parsed:', message.content.substring(0, 500) + '...');
+              // Don't let this parsing error break the component - just continue without extracted data
+              extractedMaterialsData = null;
             }
             
             // Use materialsData prop or extracted from content

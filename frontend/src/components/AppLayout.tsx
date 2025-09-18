@@ -20,14 +20,18 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   const showViewer = appPhase === 'ready' && viewerReady && urn;
 
   return (
-    <div className={`h-full flex transition-all duration-1000 ${showViewer ? 'gap-4 p-4' : ''}`}>
+    <div className="h-full flex">
+      {/* Chat side - scrollable */}
       <div className={`flex flex-col transition-all duration-1000 ${showViewer ? 'w-1/2' : 'w-full'}`}>
         {children}
       </div>
 
+      {/* Viewer side - fixed, no scroll */}
       {showViewer && (
-        <div className="w-1/2 bg-gray-800 rounded-lg overflow-hidden animate-slide-in">
-          <AutodeskViewer urn={urn} viewData={dwgViewData} />
+        <div className="w-1/2 h-full bg-gray-800 animate-slide-in flex-shrink-0 ml-4 mr-4 mb-4 mt-4 rounded-lg overflow-hidden">
+          <div className="w-full h-full">
+            <AutodeskViewer urn={urn} viewData={dwgViewData} />
+          </div>
         </div>
       )}
     </div>
