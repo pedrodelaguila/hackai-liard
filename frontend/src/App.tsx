@@ -440,56 +440,58 @@ function App() {
 
 
   return (
-    <div className="h-screen bg-gray-900 text-gray-100 flex flex-col relative">
+    <div className="h-screen bg-gray-900 text-gray-100 flex flex-col overflow-hidden">
       {/* Fixed Top Navbar */}
-      <div className="fixed top-0 left-0 right-0 z-50">
+      <div className="flex-shrink-0 z-50">
         <TopNavbar dwgId={dwgId} sessionId={sessionId} />
       </div>
-      
-      {/* Main content with padding for fixed elements */}
-      <div className="flex-1 pt-24 pb-20">
+
+      {/* Main content area */}
+      <div className="flex-1 min-h-0">
         <AppLayout
           appPhase={appPhase}
           viewerReady={viewerReady}
           urn={urn}
           dwgViewData={dwgViewData}
         >
-          <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4 bg-gray-900">
-            {isUploadPhase ? (
-              <UploadPrompt
-                onFileUpload={handleFileUpload}
-                fileInputRef={fileInputRef}
-                dwgFile={dwgFile}
-                onUploadAndStart={handleUploadAndStart}
-                isUploading={isLoading}
-              />
-            ) : !isUploadPhase && messages.length === 0 && !savedBoardName ? (
-              <ActionButtons
-                onActionSelect={handleActionSelect}
-                onFileUpload={handleFileUploadFromActions}
-                isLoading={isLoading}
-                dwgId={dwgId}
-                isCompact={false}
-                savedBoardName={savedBoardName}
-              />
-            ) : (
-              <>
-                {messages.map((message, index) => (
-                  <MessageBubble key={index} message={message} />
-                ))}
-                {streamingMessage && (
-                  <MessageBubble message={streamingMessage} isStreaming />
-                )}
-                {isLoading && <LoadingMessage />}
-              </>
-            )}
+          <div className="h-full flex flex-col">
+            <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {isUploadPhase ? (
+                <UploadPrompt
+                  onFileUpload={handleFileUpload}
+                  fileInputRef={fileInputRef}
+                  dwgFile={dwgFile}
+                  onUploadAndStart={handleUploadAndStart}
+                  isUploading={isLoading}
+                />
+              ) : !isUploadPhase && messages.length === 0 && !savedBoardName ? (
+                <ActionButtons
+                  onActionSelect={handleActionSelect}
+                  onFileUpload={handleFileUploadFromActions}
+                  isLoading={isLoading}
+                  dwgId={dwgId}
+                  isCompact={false}
+                  savedBoardName={savedBoardName}
+                />
+              ) : (
+                <>
+                  {messages.map((message, index) => (
+                    <MessageBubble key={index} message={message} />
+                  ))}
+                  {streamingMessage && (
+                    <MessageBubble message={streamingMessage} isStreaming />
+                  )}
+                  {isLoading && <LoadingMessage />}
+                </>
+              )}
+            </div>
           </div>
         </AppLayout>
       </div>
-      
+
       {/* Fixed Bottom Action Bar - only show if we have a saved board name */}
       {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && savedBoardName && (
-        <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="flex-shrink-0 z-50">
           <ActionButtons
             onActionSelect={handleActionSelect}
             onFileUpload={handleFileUploadFromActions}

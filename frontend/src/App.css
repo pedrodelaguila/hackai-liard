@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Ensure proper viewport height constraints */
+html, body, #root {
+  height: 100vh;
+  overflow: hidden;
+}
+
 @layer components {
   .loading-dots:after {
     content: '';
