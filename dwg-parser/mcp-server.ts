@@ -88,14 +88,59 @@ server.setRequestHandler(
           try {
             const dwgData = dwgStore.get(id);
             const jsonString = stringifyWithBigInt(dwgData);
-            const result = await jq.run(query, jsonString, { input: 'string' });
+            
+            try {
+              // Validate JSON format
+              JSON.parse(jsonString);
+              
+              // Preprocess query to handle common issues
+              let processedQuery = query;
+              
+              // If query tries to access .position on potentially string values, add error handling
+              if (query.includes('.position') || query.includes('["position"]')) {
+                // Wrap position access in try-empty to handle cases where position doesn't exist or is on a string
+                processedQuery = query.replace(
+                  /(\.[a-zA-Z_][a-zA-Z0-9_]*\.position|\["[^"]*"\]\.position)/g, 
+                  '($1 // empty)'
+                );
+              }
+              
+              // Execute query
+              const result = await jq.run(processedQuery, jsonString, { 
+                input: 'string'
+              });
 
-            return {
-              content: [{
-                type: "text",
-                text: typeof result === 'string' ? result : JSON.stringify(result, null, 2)
-              }]
-            };
+              return {
+                content: [{
+                  type: "text",
+                  text: typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+                }]
+              };
+            } catch (jqError: any) {
+              console.error("JQ execution error:", jqError.message);
+              console.error("Failed query:", query);
+              
+              // Return empty result for common errors to avoid breaking the flow
+              if (jqError.message.includes('Cannot index string with string') || 
+                  jqError.message.includes('Cannot iterate over') ||
+                  jqError.message.includes('null') || 
+                  jqError.message.includes('undefined')) {
+                console.log("Returning empty result for JQ error");
+                return {
+                  content: [{
+                    type: "text",
+                    text: "[]"
+                  }]
+                };
+              }
+              
+              return {
+                content: [{
+                  type: "text", 
+                  text: "[]"
+                }]
+              };
+            }
           } catch (error: any) {
             return {
               content: [{

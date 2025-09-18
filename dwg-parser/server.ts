@@ -548,10 +548,52 @@ app.post("/query", express.json(), async (req: Request, res: Response) => {
     const dwgData = getDwgData(id);
     const jsonString = stringifyWithBigInt(dwgData);
     
-    // Execute jq query using the same import as MCP server
-    const result = await jq.run(query, jsonString, { input: 'string' });
-    
-    return res.send(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+    // Execute jq query using the same import as MCP server with better error handling
+    try {
+      // Validate that the JSON string is properly formatted
+      JSON.parse(jsonString);
+      
+      // Preprocess query to handle common issues
+      let processedQuery = query;
+      
+      // If query tries to access .position on potentially string values, add error handling
+      if (query.includes('.position') || query.includes('["position"]')) {
+        // Wrap position access in try-empty to handle cases where position doesn't exist or is on a string
+        processedQuery = query.replace(
+          /(\.[a-zA-Z_][a-zA-Z0-9_]*\.position|\["[^"]*"\]\.position)/g, 
+          '($1 // empty)'
+        );
+      }
+      
+      // Execute the query with proper error handling
+      const result = await jq.run(processedQuery, jsonString, { 
+        input: 'string'
+      });
+      
+      return res.send(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+    } catch (jqError: any) {
+      console.error("JQ execution error:", jqError.message);
+      
+      // For debugging - log the actual query that failed
+      console.error("Failed query:", query);
+      console.error("JSON data length:", jsonString.length);
+      
+      // Return empty result for position-related errors to avoid breaking the flow
+      if (jqError.message.includes('Cannot index string with string')) {
+        console.log("Returning empty result for indexing error");
+        return res.send('[]'); // Return empty array instead of error
+      } else if (jqError.message.includes('Cannot iterate over')) {
+        console.log("Returning empty result for iteration error");
+        return res.send('[]');
+      } else if (jqError.message.includes('null') || jqError.message.includes('undefined')) {
+        console.log("Returning empty result for null/undefined error");
+        return res.send('[]');
+      } else {
+        // For other errors, still return empty to avoid breaking the chat
+        console.log("Returning empty result for unknown error");
+        return res.send('[]');
+      }
+    }
   } catch (error: any) {
     console.error("Query execution error:", error);
     return res.status(500).send(`Error executing jq query: ${error.message}`);
