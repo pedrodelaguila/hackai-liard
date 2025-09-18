@@ -30,7 +30,7 @@ const port = process.env.PORT || 4000;
 // CORS configuration for Vercel frontend
 const corsOptions = {
   origin: [
-    process.env.VITE_DEV_URL || 'http://localhost:5173', // Vite dev server
+    'http://localhost:5173', // Vite dev server
     /^https:\/\/.*\.vercel\.app$/, // Vercel deployments
     /^https:\/\/.*\.vercel\.com$/, // Alternative Vercel domain
   ],
