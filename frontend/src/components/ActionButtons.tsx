@@ -82,14 +82,6 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
     // In compact mode, use savedBoardName or prompt for it
     const boardToUse = isCompact ? savedBoardName : boardName;
 
-    console.log('DEBUG ActionButtons:', {
-      isCompact,
-      savedBoardName,
-      boardName,
-      boardToUse,
-      actionId: action.id
-    });
-
     if (!isCompact && (!isAccepted || !boardName.trim())) return;
     if (isCompact && !boardToUse.trim()) {
       alert('Por favor especifica primero el nombre del tablero usando el modo completo.');

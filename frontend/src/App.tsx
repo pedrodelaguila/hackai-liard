@@ -58,11 +58,8 @@ function App() {
   };
 
   const handleActionSelect = async (prompt: string, boardName?: string) => {
-    console.log('DEBUG handleActionSelect:', { prompt: prompt.substring(0, 50), boardName, currentSavedBoardName: savedBoardName });
-
     // Save board name if provided (from first use or update existing)
     if (boardName) {
-      console.log('DEBUG setting savedBoardName to:', boardName);
       setSavedBoardName(boardName);
     }
     
@@ -399,9 +396,6 @@ function App() {
         break;
 
       case 'analysis_complete': {
-        console.log('✅ Analysis complete event received. Response length:', update.data.response?.length);
-        console.log('✅ Materials data in analysis_complete:', update.data.materialsData);
-        
         // Finalize the streaming message and add it to messages
         const finalMessage: ChatMessage = {
           role: 'assistant',
@@ -411,14 +405,8 @@ function App() {
           timestamp: new Date(),
           isStreaming: false
         };
-        
-        console.log('📤 Final message being added:', {
-          hasContent: !!finalMessage.content,
-          hasMaterialsData: !!finalMessage.materialsData,
-          materialsDataType: typeof finalMessage.materialsData,
-          materialsDataKeys: finalMessage.materialsData ? Object.keys(finalMessage.materialsData) : 'none'
-        });
-        
+
+        console.log('DEBUG: Final budget message content:', finalMessage.content);
         setMessages(prev => [...prev, finalMessage]);
         setStreamingMessage(null);
         setIsLoading(false); // Enable buttons when analysis is complete
