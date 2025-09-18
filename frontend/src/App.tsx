@@ -271,14 +271,17 @@ function App() {
         break;
 
       case 'round_started':
-        setStreamingMessage(prev => prev ? {
-          ...prev,
+        // Create fresh streaming message for new round
+        setStreamingMessage({
+          role: 'assistant',
           content: `Ronda ${update.data.round}: DWGAssistant está pensando...`,
+          timestamp: new Date(),
+          isStreaming: true,
           roundInfo: {
             round: update.data.round,
             status: 'thinking' as const
           }
-        } : null);
+        });
         break;
 
       case 'round_response':
@@ -297,13 +300,13 @@ function App() {
         } catch (e) {
           // Not a JSON object, treat as regular text
         }
-        
+
         // Filter out internal thinking messages and any remaining JSON
         let filteredText = update.data.text;
-        
+
         // Remove any JSON objects that might have slipped through
         filteredText = filteredText.replace(/\{[\s\S]*?"type":\s*"[^"]*"[\s\S]*?\}/g, '');
-        
+
         // Filter technical errors and replace with user-friendly messages
         if (filteredText.toLowerCase().includes('error:') || filteredText.toLowerCase().includes('failed:') || filteredText.toLowerCase().includes('400') || filteredText.toLowerCase().includes('500')) {
           filteredText = 'Ha ocurrido un error, intenta nuevamente.';
@@ -320,11 +323,11 @@ function App() {
             { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
             { pattern: /\[\]$/gm, replacement: '' } // Remove empty array results
           ];
-          
+
           jqPatterns.forEach(({ pattern, replacement }) => {
             filteredText = filteredText.replace(pattern, replacement);
           });
-          
+
           // Filter internal thinking messages
           const internalPatterns = [
             /Simplificaré la consulta para evitar errores:?/gi,
@@ -339,29 +342,51 @@ function App() {
             /A continuación.*?:/gi,
             /Primero.*?:/gi
           ];
-          
+
           internalPatterns.forEach(pattern => {
             filteredText = filteredText.replace(pattern, '');
           });
         }
-        
+
         // Clean up extra whitespace
         filteredText = filteredText
           .replace(/\n\s*\n\s*\n/g, '\n\n')
           .replace(/^\s+|\s+$/gm, '')
           .trim();
-        
+
         // Only update if there's meaningful content after filtering
         if (filteredText) {
-          setStreamingMessage(prev => prev ? {
-            ...prev,
+          // Create persistent bubble immediately for round response
+          const roundMessage: ChatMessage = {
+            role: 'assistant',
             content: filteredText,
+            timestamp: new Date(),
+            isStreaming: false,
             roundInfo: {
               round: update.data.round,
-              status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const,
-              toolInfo: update.data.toolCount > 0 ? `Preparando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}` : undefined
+              status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const
             }
-          } : null);
+          };
+
+          setMessages(prev => [...prev, roundMessage]);
+
+          // If there are tools to execute, keep a streaming message for tool execution
+          if (update.data.toolCount > 0) {
+            setStreamingMessage({
+              role: 'assistant',
+              content: `Ejecutando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}...`,
+              timestamp: new Date(),
+              isStreaming: true,
+              roundInfo: {
+                round: update.data.round,
+                status: 'executing' as const,
+                toolInfo: `Preparando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}`
+              }
+            });
+          } else {
+            // No tools, round is complete, clear streaming message
+            setStreamingMessage(null);
+          }
         }
         break;
 
@@ -401,6 +426,7 @@ function App() {
         break;
 
       case 'round_completed':
+        // Just update the current streaming message to show "preparing next round"
         setStreamingMessage(prev => prev ? {
           ...prev,
           roundInfo: {
@@ -432,7 +458,7 @@ function App() {
         break;
 
       case 'analysis_complete': {
-        // Finalize the streaming message and add it to messages
+        // Add the final message
         const finalMessage: ChatMessage = {
           role: 'assistant',
           content: update.data.response,
