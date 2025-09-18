@@ -113,14 +113,6 @@ jobs:
           # Make scripts executable
           chmod +x scripts/certbot-setup.sh
 
-          # Create .env file if it doesn't exist (user should set ANTHROPIC_API_KEY manually)
-          if [ ! -f .env ]; then
-            echo "NODE_ENV=production" > .env
-            echo "# Set your ANTHROPIC_API_KEY=your_key_here in this file" >> .env
-            chmod 600 .env
-            echo "WARNING: Please set ANTHROPIC_API_KEY in ~/deployment/.env file"
-          fi
-
           # Login to GHCR
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
