@@ -14,6 +14,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   materialsData?: MaterialsData;
+  dwgViewData?: any;
   timestamp: Date;
   isStreaming?: boolean;
   roundInfo?: {

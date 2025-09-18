@@ -6,14 +6,23 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { getDwgAnalysisSystemMessage } from './prompts.js';
-import { 
-  createConversationSession, 
-  addMessageToHistory, 
-  getConversationHistory, 
-  buildContextFromHistory, 
-  getSessionStats 
+import * as aps from './apsService.js';
+import {
+  createConversationSession,
+  addMessageToHistory,
+  getConversationHistory,
+  buildContextFromHistory,
+  getSessionStats
 } from './conversationHistory.js';
+import { handleDwgUpload, handleDwgUploadWithChat } from './dwgUploadHandler.js';
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -112,8 +121,20 @@ async function initializeMCPClient(): Promise<void> {
   }
 }
 
-// Upload DWG file to parser service and get ID
-async function uploadDwgFile(fileBuffer: Buffer, filename: string): Promise<string> {
+// Export uploadDwgFile for reuse
+export async function uploadDwgFile(
+  fileBuffer: Buffer,
+  filename: string
+): Promise<{ id: string; localPath: string }> {
+  // Save the file locally first for APS upload
+  const localDrawingsDir = path.join(__dirname, '../cadviewer-data/drawings');
+  await fs.promises.mkdir(localDrawingsDir, { recursive: true });
+
+  const localFilename = `${Date.now()}-${filename}`;
+  const localPath = path.join(localDrawingsDir, localFilename);
+  await fs.promises.writeFile(localPath, fileBuffer);
+
+  // Also upload to the DWG parser service for analysis
   const formData = new FormData();
   formData.append('dwgfile', fileBuffer, filename);
 
@@ -126,8 +147,8 @@ async function uploadDwgFile(fileBuffer: Buffer, filename: string): Promise<stri
     throw new Error(`Failed to upload DWG: ${response.statusText}`);
   }
 
-  const result = await response.json() as any;
-  return result.id;
+  const result = (await response.json()) as any;
+  return { id: result.id, localPath: localPath };
 }
 
 // Execute jq query via MCP
@@ -147,6 +168,48 @@ async function queryDwg(id: string, query: string): Promise<string> {
 
   throw new Error('Invalid response from MCP server');
 }
+
+/**
+ * APS Token endpoint for the viewer.
+ */
+app.get('/api/aps/token', async (_req, res) => {
+  try {
+    const token = await aps.getAuthToken();
+    res.json({
+      access_token: token.access_token,
+      expires_in: token.expires_in,
+    });
+  } catch (error) {
+    console.error('Error fetching APS token:', error);
+    res.status(500).json({ error: 'Failed to fetch token' });
+  }
+});
+
+/**
+ * APS Translation Status endpoint.
+ */
+app.get('/api/aps/status/:urn', async (req, res) => {
+  try {
+    const { urn } = req.params;
+    const manifest = await aps.getTranslationStatus(urn);
+    
+    const status = manifest.body.status;
+    const progress = manifest.body.progress;
+    
+    res.json({
+      status: status,
+      progress: progress,
+      manifest: manifest.body
+    });
+  } catch (error: any) {
+    console.error('Error fetching translation status:', error);
+    if (error.response && error.response.status === 404) {
+      res.status(404).json({ error: 'Translation not found or not started' });
+    } else {
+      res.status(500).json({ error: 'Failed to fetch translation status' });
+    }
+  }
+});
 
 // Extract final result from Claude's full response
 function extractFinalResult(fullResponse: string): string {
@@ -447,17 +510,105 @@ async function handleClaudeConversationWithStreaming(
       sendUpdate('max_rounds_reached', { maxRounds, message: `Analysis stopped after ${maxRounds} rounds` });
     }
 
-    // Check for materials data
+    // Check for materials data with improved extraction and cleanup
     let materialsData = null;
     try {
-      const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"materials_list"[\s\S]*\}/);
-      if (jsonMatch) {
-        materialsData = JSON.parse(jsonMatch[0]);
-        console.log('📋 Materials list extracted:', materialsData);
-        sendUpdate('materials_extracted', { materialsData });
+      // Clean the response first - remove malformed JSON fragments
+      let cleanedResponse = fullResponse
+        .replace(/"\s*highlight"\s*:\s*\[\s*\]\s*\}/g, '') // Remove malformed highlight fragments
+        .replace(/\{\s*,/g, '{') // Fix malformed JSON starting with comma
+        .replace(/,\s*\}/g, '}'); // Fix trailing commas
+
+      // Try multiple patterns to find materials JSON (most specific first)
+      let jsonMatch = cleanedResponse.match(/\{\s*"type":\s*"materials_list"[\s\S]*?\}\s*$/);
+      
+      // Alternative pattern for JSON at the end of response
+      if (!jsonMatch) {
+        jsonMatch = cleanedResponse.match(/```json\s*(\{\s*"type":\s*"materials_list"[\s\S]*?\})\s*```/);
+        if (jsonMatch) jsonMatch[0] = jsonMatch[1];
       }
-    } catch (error) {
-      console.log('ℹ️  No materials list found in response');
+      
+      // Look for any JSON with items and categories (more flexible)
+      if (!jsonMatch) {
+        jsonMatch = cleanedResponse.match(/\{\s*"type":\s*"materials_list"[\s\S]*"items":\s*\[[\s\S]*?\]\s*\}/);
+      }
+      
+      // Try to find valid JSON with items array (broader search)
+      if (!jsonMatch) {
+        jsonMatch = cleanedResponse.match(/\{[\s\S]*?"items":\s*\[\s*\{[\s\S]*?"category"[\s\S]*?\}\s*\][\s\S]*?\}/);
+      }
+      
+      // Try to find the last complete JSON object in the response
+      if (!jsonMatch) {
+        // More sophisticated JSON extraction using balanced braces
+        const lines = cleanedResponse.split('\n');
+        let jsonStr = '';
+        let braceCount = 0;
+        let foundStart = false;
+        
+        // Look for lines that might contain our JSON
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i];
+          if (line.includes('"type"') && line.includes('"materials_list"')) {
+            foundStart = true;
+          }
+          if (foundStart) {
+            jsonStr = line + '\n' + jsonStr;
+            for (const char of line) {
+              if (char === '{') braceCount++;
+              if (char === '}') braceCount--;
+            }
+            if (braceCount === 0 && jsonStr.includes('"type"')) {
+              break;
+            }
+          }
+        }
+        
+        if (jsonStr.trim()) {
+          jsonMatch = [jsonStr.trim()];
+        }
+      }
+      
+      if (jsonMatch) {
+        let jsonStr = jsonMatch[0].trim();
+        
+        // Additional cleanup for common issues
+        jsonStr = jsonStr
+          .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+          .replace(/([{,]\s*)"([^"]*)"(\s*[}\],])/g, '$1"$2"$3') // Ensure proper quotes
+          .replace(/}\s*{/g, '},{'); // Fix missing commas between objects
+        
+        console.log('🔍 Attempting to parse JSON:', jsonStr.substring(0, 200) + '...');
+        
+        materialsData = JSON.parse(jsonStr);
+        
+        // Validate and normalize the structure
+        if (materialsData && materialsData.items && Array.isArray(materialsData.items)) {
+          // Ensure type is set
+          if (!materialsData.type) {
+            materialsData.type = 'materials_list';
+          }
+          
+          // Validate each item has required fields
+          materialsData.items = materialsData.items.filter((item: any) => 
+            item.category && item.description && typeof item.quantity === 'number'
+          );
+          
+          if (materialsData.items.length > 0) {
+            console.log('📋 Materials list extracted and validated:', materialsData);
+            sendUpdate('materials_extracted', { materialsData });
+          } else {
+            console.log('❌ Materials list had no valid items after filtering');
+            materialsData = null;
+          }
+        } else {
+          console.log('❌ Materials JSON is missing required structure');
+          materialsData = null;
+        }
+      }
+    } catch (error: any) {
+      console.log('❌ Error parsing materials JSON:', error.message);
+      console.log('🔍 Response content for debugging:', fullResponse.substring(Math.max(0, fullResponse.length - 800)));
     }
 
     console.log('🎉 Claude conversation completed successfully');
@@ -500,13 +651,8 @@ app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
 
     // If a DWG file is uploaded, process it first
     if (req.file) {
-      console.log(`📂 Processing uploaded DWG: ${req.file.originalname}`);
-      sendUpdate('status', { message: 'Subiendo y analizando archivo DWG...', stage: 'upload' });
-      
-      dwgId = await uploadDwgFile(req.file.buffer, req.file.originalname);
-      console.log(`✅ DWG uploaded with ID: ${dwgId}`);
-      
-      sendUpdate('dwg_uploaded', { dwgId, message: 'DWG file processed successfully!' });
+      const uploadResult = await handleDwgUploadWithChat(req, res, sendUpdate);
+      dwgId = uploadResult.dwgId;
     }
 
     if (!dwgId) {
@@ -575,6 +721,9 @@ app.get('/conversations/stats', (_, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Upload DWG only (no chat)
+app.post('/upload-dwg', upload.single('dwg'), handleDwgUpload);
 
 // Health check
 app.get('/health', (_, res) => {

@@ -10,7 +10,8 @@ interface InputContainerProps {
   onSendMessage: () => void;
   onKeyDown: (event: React.KeyboardEvent) => void;
   onFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  fileInputRef: React.RefObject<HTMLInputElement>;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  disabled?: boolean;
 }
 
 export const InputContainer: React.FC<InputContainerProps> = ({
@@ -22,7 +23,8 @@ export const InputContainer: React.FC<InputContainerProps> = ({
   onSendMessage,
   onKeyDown,
   onFileUpload,
-  fileInputRef
+  fileInputRef,
+  disabled = false
 }) => {
   return (
     <div className="border-t border-gray-700 bg-gray-800 p-4">
@@ -36,9 +38,11 @@ export const InputContainer: React.FC<InputContainerProps> = ({
               placeholder={
                 dwgId
                   ? "Pregúntame sobre tu archivo DWG..."
-                  : "Sube un archivo DWG y hazme preguntas sobre él..."
+                  : disabled
+                    ? "Sube un archivo DWG para comenzar a chatear..."
+                    : "Escribe tu mensaje..."
               }
-              disabled={isLoading}
+              disabled={isLoading || disabled}
               className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg resize-none min-h-[40px] max-h-[120px] focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 input-focus text-white placeholder-gray-400 pr-4 pb-10"
               rows={1}
             />
@@ -64,8 +68,10 @@ export const InputContainer: React.FC<InputContainerProps> = ({
           </div>
           <SendButton
             onClick={onSendMessage}
-            disabled={isLoading || (!currentMessage.trim() && !dwgFile)}
+            disabled={isLoading || disabled || (!currentMessage.trim() && !dwgFile)}
             isLoading={isLoading}
+            dwgFile={dwgFile}
+            dwgId={dwgId}
           />
         </div>
       </div>
