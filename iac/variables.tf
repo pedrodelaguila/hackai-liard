@@ -1,7 +1,7 @@
 variable "name_prefix" {
   description = "Prefix used for resource names"
   type        = string
-  default     = "liard-hackai"
+  default     = "hackai-liard"
 }
 
 variable "location" {
@@ -45,4 +45,10 @@ variable "disk_size_gb" {
   description = "OS disk size in GB"
   type        = number
   default     = 30
+}
+
+variable "domain_name" {
+  description = "Domain name for the application (e.g., example.com)"
+  type        = string
+  default     = "hackai.liard.io"
 }

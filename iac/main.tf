@@ -13,6 +13,8 @@ provider "azurerm" {
 	skip_provider_registration = true
 }
 
+data "azurerm_client_config" "current" {}
+
 resource "azurerm_resource_group" "rg" {
   name     = "${var.name_prefix}-rg"
   location = var.location
@@ -115,6 +117,10 @@ resource "azurerm_linux_virtual_machine" "vm" {
   ]
   disable_password_authentication = true
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   admin_ssh_key {
     username   = var.admin_username
     public_key = local.ssh_public_key
@@ -142,4 +148,37 @@ resource "azurerm_linux_virtual_machine" "vm" {
     Name = "${var.name_prefix}-vm"
   }
 }
+
+
+# DNS Zone (only create if domain_name is provided)
+resource "azurerm_dns_zone" "main" {
+  count               = var.domain_name != "" ? 1 : 0
+  name                = var.domain_name
+  resource_group_name = azurerm_resource_group.rg.name
+
+  tags = {
+    Name = "${var.name_prefix}-dns-zone"
+  }
+}
+
+# A Record pointing to public IP
+resource "azurerm_dns_a_record" "main" {
+  count               = var.domain_name != "" ? 1 : 0
+  name                = "@"
+  zone_name           = azurerm_dns_zone.main[0].name
+  resource_group_name = azurerm_resource_group.rg.name
+  ttl                 = 3600
+  records             = [azurerm_public_ip.pip.ip_address]
+}
+
+# WWW CNAME Record
+resource "azurerm_dns_cname_record" "www" {
+  count               = var.domain_name != "" ? 1 : 0
+  name                = "www"
+  zone_name           = azurerm_dns_zone.main[0].name
+  resource_group_name = azurerm_resource_group.rg.name
+  ttl                 = 3600
+  record              = var.domain_name
+}
+
 
