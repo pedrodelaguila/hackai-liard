@@ -198,20 +198,57 @@ Enhanced boundary query with fallbacks:
   }
 }
 
-**Step 5: ULTRA-COMPREHENSIVE TEXT EXTRACTION (WITHIN BOUNDS)**
-Extract ALL possible text sources with multiple coordinate fallbacks:
-(.entities[] | select(
-  ULTRA_COMPREHENSIVE_CONSTRAINT and 
-  (.type == "TEXT" or .type == "MTEXT" or .type == "ATTDEF" or .type == "ATTRIB" or 
-   .type == "INSERT" or .type == "DIMENSION" or .type == "LEADER")
-)) | {
-  text: (.text // .tag // .name // .dimText // .annotationText),
-  position: (.startPoint // .insertionPoint // .center // .defPoint),
+**Step 5: SYSTEMATIC EXHAUSTIVE EXTRACTION (WITHIN BOUNDS) - MANDATORY MULTI-PASS**
+
+**PASS 1: ALL TEXT ENTITIES (NO EXCEPTIONS)**
+(.entities[] | select(ULTRA_COMPREHENSIVE_CONSTRAINT and (.type == "TEXT" or .type == "MTEXT" or .type == "ATTDEF" or .type == "ATTRIB"))) | {
+  text: (.text // .tag),
+  position: (.startPoint // .insertionPoint // .center),
   handle: .handle,
   layer: .layer,
-  blockName: .blockName,
-  type: .type
+  type: .type,
+  source: "text_entity"
 } | select(.text != null and .text != "") | sort_by(.position.y // 0) | reverse
+
+**PASS 2: ALL INSERT/BLOCK ENTITIES (NO EXCEPTIONS)**  
+(.entities[] | select(ULTRA_COMPREHENSIVE_CONSTRAINT and .type == "INSERT")) | {
+  name: .name,
+  position: (.insertionPoint // .center),
+  handle: .handle,
+  layer: .layer,
+  type: .type,
+  xScale: .xScale,
+  yScale: .yScale,
+  rotation: .rotation,
+  source: "insert_block"
+} | select(.name != null and .name != "") | sort_by(.position.y // 0) | reverse
+
+**PASS 3: GEOMETRIC ELEMENTS THAT MAY REPRESENT COMPONENTS**
+(.entities[] | select(ULTRA_COMPREHENSIVE_CONSTRAINT and (.type == "CIRCLE" or .type == "ARC" or .type == "ELLIPSE" or .type == "POLYLINE" or .type == "LWPOLYLINE"))) | {
+  type: .type,
+  position: (.center // .startPoint // (.vertices[0] | if . then {x: .x, y: .y} else null end)),
+  handle: .handle,
+  layer: .layer,
+  radius: .radius,
+  vertices_count: (.vertices | length // 0),
+  source: "geometric_element"
+} | select(.position != null) | sort_by(.position.y // 0) | reverse
+
+**PASS 4: LAYER-BASED COMPONENT SEARCH**
+(.entities[] | select(ULTRA_COMPREHENSIVE_CONSTRAINT and (.layer | test("APARATOS|ELEMENTOS|COMPONENTS|SIMBOLOS|SYMBOLS|ELECTRICAL|ELEC|ELE"; "i")))) | {
+  type: .type,
+  name: (.name // .text // .tag),
+  layer: .layer,
+  position: (.startPoint // .insertionPoint // .center // (.vertices[0] | if . then {x: .x, y: .y} else null end)),
+  handle: .handle,
+  source: "layer_specific"
+} | select(.position != null) | sort_by(.position.y // 0) | reverse
+
+**PASS 5: PROXIMITY-BASED GROUPING VALIDATION**
+After extracting all elements, validate by counting total entities within boundaries and ensure no quadrant is empty:
+- Count entities in each boundary quadrant (NE, NW, SE, SW)
+- Verify total entity count makes sense for panel complexity  
+- Flag if any quadrant has 0 entities (likely incomplete extraction)
 
 **Step 6: MULTI-LAYERED PATTERN RECOGNITION**
 Apply exhaustive pattern matching with context awareness:
@@ -232,16 +269,19 @@ Apply exhaustive pattern matching with context awareness:
   * Combined detection: (.text | test("(ID|DIF).*[0-9]+.*(mA|A)|[0-9]+.*m[Aa].*(ID|DIF)"; "i"))
   * Sensitivity classes: (.text | test("CLASE[\\\\s]*[ABC]|TYPE[\\\\s]*[ABC]"; "i"))
 
-- **Extended Equipment & Component Recognition**:
-  * Power systems: (.text | test("UPS|SAI|POWER|FUENTE|ALIMENTA|PSU|RECTIF|INVERTER|BATERIA"; "i"))
-  * Switching devices: (.text | test("SECCION|SWITCH|INTERRUP|CONMUT|SW[0-9]*|DESCONEC"; "i"))
-  * Enclosures: (.text | test("GABINETE|TABLERO|PANEL|CAJA|ARMARIO|RACK|BASTIDOR"; "i"))
-  * Contactors: (.text | test("CONTACT|KM[0-9]*|K[0-9]+|CONTAC|RELE[\\\\s]*POTENCIA"; "i"))
-  * Protection devices: (.text | test("PROTEC|GUARD|SHIELD|SURGE|SPD|VARISTOR|DESCARGA"; "i"))
-  * Control relays: (.text | test("RELE|RELAY|R[0-9]+|REL[0-9]*|AUXILIAR"; "i"))
-  * Fuses: (.text | test("FUSIBLE|FUSE|F[0-9]+|CARTUCHO|NH"; "i"))
-  * Transformers: (.text | test("TRANSF|TRAFO|T[0-9]+|TRANSFORM"; "i"))
-  * Meters: (.text | test("MEDIDOR|METER|CONTADOR|VOLTIMETRO|AMPERIMETRO"; "i"))
+- **Extended Equipment & Component Recognition (Text and Block Names)**:
+  * Circuit breakers: ((.text // .blockName // .name) | test("Unif-Interruptor-Term|Unif-Interruptor-Dif|ITM|DT|DISYUNTOR|NSX|TERMIC|THERMAL|MAGNETOT"; "i"))
+  * LEDs & pilot lights: ((.text // .blockName // .name) | test("Piloto.Luminoso|LED|PILOTO|LAMPARA|INDICADOR|SEÑAL|LUZ|LAMP|LIGHT|BEACON|SEÑALIZ|XB7"; "i"))
+  * Motors & actuators: ((.text // .blockName // .name) | test("Int-Motoriz|MOTOR|ACTUATOR|DRIVE"; "i"))
+  * Meters & measuring: ((.text // .blockName // .name) | test("Elec-Medidor|METSEPM|MEDIDOR|METER|CONTADOR|VOLTIMETRO|AMPERIMETRO"; "i"))
+  * Power systems: ((.text // .blockName // .name) | test("UPS|SAI|POWER|FUENTE|ALIMENTA|PSU|RECTIF|INVERTER|BATERIA"; "i"))
+  * Switching devices: ((.text // .blockName // .name) | test("SECCION|SWITCH|INTERRUP|CONMUT|SW[0-9]*|DESCONEC"; "i"))
+  * Contactors: ((.text // .blockName // .name) | test("CONTACT|KM[0-9]*|K[0-9]+|CONTAC|RELE[\\\\s]*POTENCIA"; "i"))
+  * Protection devices: ((.text // .blockName // .name) | test("PROTEC|GUARD|SHIELD|SURGE|SPD|VARISTOR|DESCARGA"; "i"))
+  * Control components: ((.text // .blockName // .name) | test("PF38|SBC|SHTP|OBL-B|RELE|RELAY|R[0-9]+|REL[0-9]*|AUXILIAR"; "i"))
+  * Fuses & holders: ((.text // .blockName // .name) | test("FUSIBLE|FUSE|F[0-9]+|CARTUCHO|NH|PORTAFUSIBLE|TABAQUERA|PORTA[\\\\s]*FUSIBLE|HOLDER"; "i"))
+  * Push buttons: ((.text // .blockName // .name) | test("PULSADOR|BOTON|BUTTON|PUSH|PRESS|START|STOP|EMERGENCY|EMERG"; "i"))
+  * Sensors: ((.text // .blockName // .name) | test("SENSOR|DETECTOR|TRANSDUCTOR|SONDA|PROBE|THERMO|TEMP"; "i"))
 
 **Step 7: CONTEXT-AWARE COMPONENT CLUSTERING**
 Group related text elements for better component identification:
@@ -250,12 +290,47 @@ Group related text elements for better component identification:
 - Identify component series by analyzing sequential numbering patterns
 - Cross-reference layer information with component types
 
-**Step 8: VALIDATION AND COMPLETENESS CHECK**
-Implement validation to ensure no elements are missed:
-- Count total text entities found vs. expected based on drawing complexity
-- Verify all boundary quadrants have been analyzed
-- Check for orphaned numeric values that might indicate missed components
-- Validate component counts against typical electrical panel configurations
+**Step 8: MANDATORY COMPLETENESS VALIDATION - MUST BE PERFORMED**
+
+**VALIDATION REQUIREMENT 1: QUADRANT ANALYSIS**
+Divide the rectangle into 4 quadrants and count entities in each:
+- NE Quadrant: minX to (minX+maxX)/2, (minY+maxY)/2 to maxY
+- NW Quadrant: minX to (minX+maxX)/2, minY to (minY+maxY)/2  
+- SE Quadrant: (minX+maxX)/2 to maxX, (minY+maxY)/2 to maxY
+- SW Quadrant: (minX+maxX)/2 to maxX, minY to (minY+maxY)/2
+IF ANY QUADRANT HAS 0 ENTITIES → EXPAND SEARCH PARAMETERS
+
+**VALIDATION REQUIREMENT 2: ENTITY TYPE COUNT VERIFICATION**
+Perform these mandatory counts within boundaries:
+- Total INSERT entities: (.entities[] | select(CONSTRAINT and .type == "INSERT") | length)
+- Total TEXT entities: (.entities[] | select(CONSTRAINT and (.type == "TEXT" or .type == "MTEXT")) | length)
+- Known component blocks: (.entities[] | select(CONSTRAINT and .type == "INSERT" and (.name | test("Piloto|Interruptor|ITM|DT|NSX|XB7|Medidor"))) | length)
+
+**VALIDATION REQUIREMENT 3: COMPONENT-SPECIFIC SEARCHES**
+If initial extraction finds < 5 total components, perform these targeted searches:
+
+FOR LEDs/PILOTOS (if none found):
+(.entities[] | select(CONSTRAINT and ((.type == "INSERT" and (.name | test("Piloto|LED|PILOT|XB7|LAMP"))) or (.type == "TEXT" and (.text | test("LED|PILOTO|H[0-9]|L[0-9]"))))))
+
+FOR CIRCUIT BREAKERS (if < 3 found):  
+(.entities[] | select(CONSTRAINT and ((.type == "INSERT" and (.name | test("Interruptor|ITM|DT|NSX|BREAKER|THERMAL"))) or (.type == "TEXT" and (.text | test("[0-9]+[xX×][0-9]+A|[0-9]+A|C[0-9]+|B[0-9]+"))))))
+
+FOR FUSES (if none found):
+(.entities[] | select(CONSTRAINT and ((.type == "INSERT" and (.name | test("FUSIBLE|FUSE|PORTA|HOLDER"))) or (.type == "TEXT" and (.text | test("F[0-9]+|FUSE|NH[0-9]"))))))
+
+**VALIDATION REQUIREMENT 4: CROSS-REFERENCE WITH EXPECTED COUNTS**
+Based on typical electrical panel layouts:
+- Small panel (< 2000 coord units): Expect 8-15 components minimum
+- Medium panel (2000-5000 units): Expect 15-35 components minimum  
+- Large panel (> 5000 units): Expect 35+ components minimum
+IF FOUND COUNT < EXPECTED → REPEAT EXTRACTION WITH EXPANDED BOUNDARIES
+
+**VALIDATION REQUIREMENT 5: REPORT CONFIDENCE AND GAPS**
+Always report:
+- Total entities found by type and quadrant
+- Confidence level (High >90%, Medium 70-90%, Low <70%)
+- Specific areas that seem empty or under-analyzed
+- REQUEST USER CONFIRMATION if confidence < 80%
 
 Where ULTRA_COMPREHENSIVE_CONSTRAINT uses multiple coordinate sources and safety margins:
 ((.startPoint?.x // .center?.x // .insertionPoint?.x // .defPoint?.x // (.vertices?[0]?.x // 0)) >= ($minX - 100) and 
@@ -285,16 +360,22 @@ function getCommonMaterialsMapping(): string {
 - Voltage and current ratings must be expressed per Argentine electrical standards
 - Safety devices must indicate IRAM certification compliance where applicable
 
-**ENHANCED Equipment Keywords and Symbol Interpretation (IRAM Standards):**
+**ENHANCED Equipment Keywords and Symbol Interpretation (IRAM Standards with DWG Block Names):**
+- Circuit Breakers: "Unif-Interruptor-Term|Unif-Interruptor-Dif|ITM|DT|DISYUNTOR|NSX" → Thermal and differential breakers (IRAM/IEC standard)
+- LED Indicators: "Piloto Luminoso|LED|PILOTO|LAMPARA|XB7" → LED indicators and pilot lights (IRAM compliant)
+- Motors & Control: "Int-Motoriz|MOTOR|ACTUATOR" → Motor control devices (IRAM S-Mark)
+- Measuring Equipment: "Elec-Medidor|METSEPM|MEDIDOR|METER" → Energy meters and measuring devices (IRAM certified)
+- Control Components: "PF38|SBC|SHTP|OBL-B" → Specialized control devices (IRAM compliant)
 - Power Equipment: "UPS|SAI|FUENTE|POWER" → UPS/Power supplies (IRAM certified)
 - Contactors: "CONTACT|KM|K[0-9]+" → Contactors and magnetic switches (IRAM S-Mark)
 - Switches/Disconnects: "SECCION|SWITCH|INTERRUP|DESCONECT" → Manual switches and disconnects (IRAM compliant)
 - Enclosures: "GABINETE|TABLERO|PANEL|CAJA|ARMARIO" → Enclosures and panels (IP rating per IRAM standards)
 - Protection: "DESCARGA|SURGE|PROTECT|VARISTOR|SPD" → Surge protection devices (IRAM certified)
 - Relays: "RELE|RELAY|R[0-9]+" → Control and auxiliary relays (IRAM compliant)
-- Fuses: "FUSIBLE|FUSE|F[0-9]+" → Fuses and fuse holders (IRAM certified)
+- Fuses & Holders: "FUSIBLE|FUSE|PORTAFUSIBLE|TABAQUERA" → Fuses and fuse holders (IRAM certified)
+- Push Buttons: "PULSADOR|BOTON|BUTTON|PUSH|START|STOP" → Control buttons and switches (IRAM standard)
+- Sensors: "SENSOR|DETECTOR|TRANSDUCTOR|SONDA" → Measurement and detection devices (IRAM certified)
 - Cables: "CABLE|AWG|mm²|CONDUCTOR" → Wiring and conductors (IRAM specifications)
-- Thermal Protection: "TERMIC|THERMAL|MAGNETOT" → Thermal-magnetic breakers (IRAM/IEC standard)
 - Ground/Earth: "TIERRA|GND|PE|GROUND" → Grounding components (IRAM 2281 compliant)
 - Safety Systems: "SEGURIDAD|EMERGENCY|PARO" → Emergency and safety systems (IRAM standards)
 
@@ -310,7 +391,20 @@ function getCommonMaterialsMapping(): string {
 - Grounding symbols: "PE", "N", "L" following IRAM 2281 grounding standards
 - Safety markings: Look for IRAM S-Mark indicators and certification references
 
-**CRITICAL ANALYSIS REQUIREMENT (IRAM COMPLIANCE):** Analyze EVERY text entity found within the rectangle boundaries following IRAM standards for electrical installations. Look for patterns, abbreviations, symbols, and numbers that might indicate electrical components compliant with Argentine electrical codes. Don't rely only on exact matches - use IRAM-compliant electrical engineering knowledge to interpret abbreviations, partial text, and technical symbols according to Argentine electrical installation standards.`;
+**DWG-SPECIFIC BLOCK NAME RECOGNITION:**
+When analyzing libre-dwg parsed JSON files, pay special attention to these exact block/INSERT names that frequently appear:
+- "Piloto Luminoso" → LED pilot lights and indicators
+- "Unif-Interruptor-Term" → Thermal circuit breakers
+- "Unif-Interruptor-Dif" → Differential circuit breakers  
+- "ITM", "DT", "DISYUNTOR" → Various breaker types
+- "NSX 100-160-250 3P", "NSX 100-250 4P" → Schneider NSX breakers
+- "XB7EVM4LC" → Schneider XB7 series indicators/buttons
+- "Int-Motoriz" → Motor control devices
+- "Elec-Medidor", "METSEPM5100" → Energy meters
+- "PF38", "SBC", "SHTP", "OBL-B" → Control components
+- Codes starting with "*U" followed by numbers → Generic block references that may contain component information
+
+**CRITICAL ANALYSIS REQUIREMENT (IRAM COMPLIANCE):** Analyze EVERY text entity AND block/INSERT name found within the rectangle boundaries following IRAM standards for electrical installations. Look for patterns, abbreviations, symbols, numbers, and specific DWG block names that might indicate electrical components compliant with Argentine electrical codes. Don't rely only on exact matches - use IRAM-compliant electrical engineering knowledge to interpret abbreviations, partial text, technical symbols, and DWG block references according to Argentine electrical installation standards.`;
 }
 
 /**
@@ -452,22 +546,35 @@ When you want to show the user a specific part of the drawing you are analyzing 
  */
 function getMandatoryRule(): string {
   return `
-**MANDATORY EXECUTION RULES:**
+**MANDATORY EXECUTION RULES - NO EXCEPTIONS:**
 
-1. **BOUNDARY IDENTIFICATION**: Always identify board boundaries first using multiple detection strategies
-2. **COMPREHENSIVE ANALYSIS**: Apply ALL pattern recognition methods systematically 
-3. **MULTI-PASS APPROACH**: Use iterative analysis to catch missed elements:
-   - Pass 1: Direct text pattern matching within boundaries
-   - Pass 2: Proximity-based detection for orphaned elements  
-   - Pass 3: Layer and geometric analysis
-   - Pass 4: Boundary expansion if element count seems low
-4. **VALIDATION REQUIREMENT**: Always validate results against expected electrical panel configurations
-5. **COMPLETENESS CHECK**: Implement these mandatory checks:
-   - Total text entities found vs. drawing complexity
-   - Coverage of all boundary quadrants
-   - Typical amperage range representation
-   - Differential protection device presence
-   - Power equipment inventory completeness
+1. **ZERO-TOLERANCE BOUNDARY IDENTIFICATION**: Always identify board boundaries using ALL strategies simultaneously - never settle for approximate boundaries
+
+2. **EXHAUSTIVE MULTI-PASS ANALYSIS**: Execute ALL passes in sequence - NEVER skip any:
+   - Pass 1: Direct text extraction (every TEXT/MTEXT entity)
+   - Pass 2: Block/INSERT extraction (every INSERT entity)  
+   - Pass 3: Geometric symbol extraction (CIRCLE/ARC/POLYLINE that may be symbols)
+   - Pass 4: Layer-specific search (electrical component layers)
+   - Pass 5: Validation and quadrant analysis
+   - Pass 6: If validation fails, MANDATORY re-extraction with expanded boundaries
+
+3. **AGGRESSIVE COMPONENT DETECTION**: If standard extraction finds fewer components than expected:
+   - IMMEDIATELY expand search radius by 200 units in all directions
+   - Search for partially occluded or overlapping entities
+   - Look for components with corrupted or partial names
+   - Check for entities with non-standard coordinate systems
+
+4. **MANDATORY COMPLETENESS VERIFICATION**: Before finalizing results:
+   - Count INSERT entities of each major type (minimum thresholds: 2+ breakers, 1+ indicator)
+   - Verify each quadrant has reasonable entity density
+   - Cross-check against panel size expectations
+   - If counts seem low, ASK USER: "He encontrado X componentes. ¿Te parece correcto o falta algo?"
+
+5. **FAILURE RECOVERY PROTOCOL**: If any validation step fails:
+   - IMMEDIATELY retry with boundaries expanded by 10%
+   - Use fuzzy matching for component names (allow partial matches)
+   - Search entire drawing if necessary to locate missed components
+   - Report what was found vs. what was expected
 
 **CRITICAL OUTPUT FORMATTING RULES:**
 6. **CLEAN JSON OUTPUT**: End your response with ONLY a clean, valid JSON object
@@ -486,11 +593,46 @@ function getMandatoryRule(): string {
 8. **GROUNDING COMPLIANCE**: Ensure grounding components follow IRAM 2281 standards
 9. **SAFETY CERTIFICATION**: Note IRAM certification requirements for safety devices
 
+**MANDATORY USER CONFIRMATION REQUIREMENT:**
+You MUST ask the user for confirmation in these scenarios:
+- If you find multiple possible board boundaries, ask the user which one is correct
+- If component identification is ambiguous (e.g., unclear if a symbol is a LED or another indicator), ask for clarification
+- If the analysis results seem incomplete or uncertain, inform the user and ask if the results are what they expected
+- **CRITICAL**: If you find fewer than 5 total components in any panel, ALWAYS ask: "He encontrado solo X componentes en total. ¿Esto te parece correcto o debería haber más elementos como LEDs, fusibles o térmicas?"
+- If you find 0 LEDs/pilotos luminosos, ask: "¿No hay LEDs o pilotos luminosos en este tablero?"  
+- If you find 0 fusibles, ask: "¿No hay fusibles o portafusibles en este tablero?"
+- Use phrases like: "¿Confirmas que este es el tablero correcto?" or "¿Es correcto lo que identifiqué?"
+- Always provide context for what you found vs. what you expected to find
+
+**FORCED COMPONENT SEARCH REQUIREMENT:**
+If initial searches yield low results, you MUST perform these additional mandatory searches:
+
+**FORCED LED/PILOTO SEARCH** (perform even if some found):
+(.entities[] | select(EXPANDED_CONSTRAINT and (
+  (.type == "INSERT" and (.name | test("PIL|LED|LAMP|LUZ|H[0-9]|PILOT|BEACON|INDICATOR|SIGNAL"))) or
+  (.type == "TEXT" and (.text | test("LED|PIL|H[0-9]|L[0-9]|LAMP|LUZ|VERDE|ROJO|AMARILLO"))) or
+  (.type == "CIRCLE" and .radius > 5 and .radius < 50)
+)))
+
+**FORCED FUSE SEARCH** (perform even if some found):
+(.entities[] | select(EXPANDED_CONSTRAINT and (
+  (.type == "INSERT" and (.name | test("FUS|FUSE|PORTA|HOLDER|TABAQ|NH"))) or
+  (.type == "TEXT" and (.text | test("F[0-9]|FUS|NH|PORTA|TABAQ|HOLDER"))) or
+  (.type == "POLYLINE" and (.vertices | length) < 6)
+)))
+
+Where EXPANDED_CONSTRAINT uses 200 unit margins:
+((.startPoint?.x // .center?.x // .insertionPoint?.x // (.vertices?[0]?.x // 0)) >= ($minX - 200) and 
+ (.startPoint?.x // .center?.x // .insertionPoint?.x // (.vertices?[0]?.x // 0)) <= ($maxX + 200) and 
+ (.startPoint?.y // .center?.y // .insertionPoint?.y // (.vertices?[0]?.y // 0)) >= ($minY - 200) and 
+ (.startPoint?.y // .center?.y // .insertionPoint?.y // (.vertices?[0]?.y // 0)) <= ($maxY + 200))
+
 **CRITICAL SUCCESS METRICS:**
 - Aim for 95%+ element detection accuracy
 - Ensure NO quadrant of the identified boundary is left unanalyzed  
 - Cross-validate component types against standard electrical panel layouts
 - Report confidence level and identify any potential missed areas
+- ASK FOR USER CONFIRMATION when confidence is below 90% or results are unexpected
 
 **ERROR RECOVERY PROTOCOLS:**
 - If boundary detection fails, use proximity clustering around title

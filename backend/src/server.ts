@@ -31,6 +31,7 @@ const port = process.env.PORT || 4000;
 
 // Middleware
 app.use(express.json({ limit: '10mb' })); // Add request size limit
+// app.use(cors({ origin: 'http://localhost:5173' }));
 
 // Multer for file uploads
 const storage = multer.memoryStorage();
@@ -318,7 +319,7 @@ function extractFinalResult(fullResponse: string): string {
 async function executeDwgQuery(dwgId: string, query: string): Promise<string> {
   try {
     const queryResult = await queryDwg(dwgId, query);
-    console.log(`✅ Query executed successfully: ${query}`);
+    // console.log(`✅ Query executed successfully: ${query}`);
     return queryResult;
   } catch (error: any) {
     console.error(`❌ Query failed: ${query}`, error);
@@ -374,7 +375,7 @@ async function handleClaudeConversationWithStreaming(
   let conversationMessages = [...messages];
   let fullResponse = "";
   let conversationRound = 1;
-  const maxRounds = 15;
+  const maxRounds = 25;
 
   try {
     while (conversationRound <= maxRounds) {
@@ -423,13 +424,12 @@ async function handleClaudeConversationWithStreaming(
           const toolBlock = toolUseBlocks[i];
           if (toolBlock.name === 'query_dwg') {
             const query = (toolBlock.input as any).query;
-            console.log(`🔍 Executing query ${i + 1}/${toolUseBlocks.length}: ${query}`);
+            // console.log(`🔍 Executing query ${i + 1}/${toolUseBlocks.length}: ${query}`);
             sendUpdate('tool_executing', { 
               round: conversationRound, 
               toolIndex: i + 1, 
               totalTools: toolUseBlocks.length,
-              query: query.substring(0, 100) + (query.length > 100 ? '...' : ''),
-              message: `Query ${i + 1}/${toolUseBlocks.length}: ${query.substring(0, 50)}...`
+              message: `Analizando datos del tablero...`
             });
             
             const result = await executeDwgQuery(dwgId, query);
@@ -446,11 +446,11 @@ async function handleClaudeConversationWithStreaming(
               result: result
             });
             
-            console.log(`✅ Query result: ${result.substring(0, 100)}...`);
+            // console.log(`✅ Query result: ${result.substring(0, 100)}...`);
             sendUpdate('tool_completed', { 
               round: conversationRound, 
               toolIndex: i + 1,
-              resultPreview: result.substring(0, 200) + (result.length > 200 ? '...' : '')
+              message: `Análisis completo`
             });
           }
         }
