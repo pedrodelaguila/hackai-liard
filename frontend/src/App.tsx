@@ -27,13 +27,18 @@ function App() {
   const [savedBoardName, setSavedBoardName] = useState<string>('');
   const [isProcessingViewer, setIsProcessingViewer] = useState<boolean>(false);
   const [isLargeFile, setIsLargeFile] = useState<boolean>(false);
+  const [showViewerReady, setShowViewerReady] = useState<boolean>(false);
   const [fileCharacteristics, setFileCharacteristics] = useState<{isLarge: boolean, hasUrn: boolean}>({isLarge: false, hasUrn: false});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { appPhase, viewerReady, moveToProcessing, moveToReady, isUploadPhase, isProcessingPhase } = useAppPhases();
   const handleViewerReady = useCallback(() => {
     setIsProcessingViewer(false);
+    setShowViewerReady(true);
     moveToReady();
+
+    // Hide the success message after 4 seconds
+    setTimeout(() => setShowViewerReady(false), 4000);
   }, [moveToReady]);
 
   const { pollTranslationStatus } = useTranslationPolling(handleViewerReady);
@@ -271,14 +276,17 @@ function App() {
         break;
 
       case 'round_started':
-        setStreamingMessage(prev => prev ? {
-          ...prev,
+        // Create fresh streaming message for new round
+        setStreamingMessage({
+          role: 'assistant',
           content: `Ronda ${update.data.round}: DWGAssistant está pensando...`,
+          timestamp: new Date(),
+          isStreaming: true,
           roundInfo: {
             round: update.data.round,
             status: 'thinking' as const
           }
-        } : null);
+        });
         break;
 
       case 'round_response':
@@ -297,71 +305,108 @@ function App() {
         } catch (e) {
           // Not a JSON object, treat as regular text
         }
-        
+
         // Filter out internal thinking messages and any remaining JSON
         let filteredText = update.data.text;
-        
+
         // Remove any JSON objects that might have slipped through
         filteredText = filteredText.replace(/\{[\s\S]*?"type":\s*"[^"]*"[\s\S]*?\}/g, '');
-        
-        // Filter technical errors and replace with user-friendly messages
-        if (filteredText.toLowerCase().includes('error:') || filteredText.toLowerCase().includes('failed:') || filteredText.toLowerCase().includes('400') || filteredText.toLowerCase().includes('500')) {
+
+        // Check if this is budget/table content that should be preserved
+        const isBudgetContent = filteredText.includes('|') && (
+          filteredText.includes('Categoría') ||
+          filteredText.includes('Descripción') ||
+          filteredText.includes('Cantidad') ||
+          filteredText.includes('Precio') ||
+          filteredText.includes('Subtotal') ||
+          filteredText.includes('TOTAL')
+        );
+
+        // Filter technical errors and replace with user-friendly messages (but preserve budget content)
+        if (!isBudgetContent && (filteredText.toLowerCase().includes('error:') || filteredText.toLowerCase().includes('failed:') || filteredText.toLowerCase().includes('400') || filteredText.toLowerCase().includes('500'))) {
           filteredText = 'Ha ocurrido un error, intenta nuevamente.';
         } else {
-          // Filter JQ queries and replace with user-friendly messages
-          const jqPatterns = [
-            { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
-            { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
-            { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
-            { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
-            { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
-            { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
-            { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
-            { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
-            { pattern: /\[\]$/gm, replacement: '' } // Remove empty array results
-          ];
-          
-          jqPatterns.forEach(({ pattern, replacement }) => {
-            filteredText = filteredText.replace(pattern, replacement);
-          });
-          
-          // Filter internal thinking messages
-          const internalPatterns = [
-            /Simplificaré la consulta para evitar errores:?/gi,
-            /Ahora voy a buscar también elementos.*?:/gi,
-            /Ahora voy a analizar también las dimensiones.*?:/gi,
-            /Voy a realizar una búsqueda.*?:/gi,
-            /Let me.*?:/gi,
-            /I'll.*?:/gi,
-            /I will.*?:/gi,
-            /Ahora procederé a.*?:/gi,
-            /Procedemos a.*?:/gi,
-            /A continuación.*?:/gi,
-            /Primero.*?:/gi
-          ];
-          
-          internalPatterns.forEach(pattern => {
-            filteredText = filteredText.replace(pattern, '');
-          });
+          // Only apply filtering if it's not budget content
+          if (!isBudgetContent) {
+            // Filter JQ queries and replace with user-friendly messages
+            const jqPatterns = [
+              { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
+              { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
+              { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
+              { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
+              { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
+              { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
+              { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
+              { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
+              { pattern: /\[\]$/gm, replacement: '' } // Remove empty array results
+            ];
+
+            jqPatterns.forEach(({ pattern, replacement }) => {
+              filteredText = filteredText.replace(pattern, replacement);
+            });
+          }
+
+          // Filter internal thinking messages (only if not budget content)
+          if (!isBudgetContent) {
+            const internalPatterns = [
+              /Simplificaré la consulta para evitar errores:?/gi,
+              /Ahora voy a buscar también elementos.*?:/gi,
+              /Ahora voy a analizar también las dimensiones.*?:/gi,
+              /Voy a realizar una búsqueda.*?:/gi,
+              /Let me.*?:/gi,
+              /I'll.*?:/gi,
+              /I will.*?:/gi,
+              /Ahora procederé a.*?:/gi,
+              /Procedemos a.*?:/gi,
+              /A continuación.*?:/gi,
+              /Primero.*?:/gi
+            ];
+
+            internalPatterns.forEach(pattern => {
+              filteredText = filteredText.replace(pattern, '');
+            });
+          }
         }
-        
+
         // Clean up extra whitespace
         filteredText = filteredText
           .replace(/\n\s*\n\s*\n/g, '\n\n')
           .replace(/^\s+|\s+$/gm, '')
           .trim();
-        
+
         // Only update if there's meaningful content after filtering
         if (filteredText) {
-          setStreamingMessage(prev => prev ? {
-            ...prev,
+          // Create persistent bubble immediately for round response
+          const roundMessage: ChatMessage = {
+            role: 'assistant',
             content: filteredText,
+            timestamp: new Date(),
+            isStreaming: false,
             roundInfo: {
               round: update.data.round,
-              status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const,
-              toolInfo: update.data.toolCount > 0 ? `Preparando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}` : undefined
+              status: update.data.toolCount > 0 ? 'executing' as const : 'completed' as const
             }
-          } : null);
+          };
+
+          setMessages(prev => [...prev, roundMessage]);
+
+          // If there are tools to execute, keep a streaming message for tool execution
+          if (update.data.toolCount > 0) {
+            setStreamingMessage({
+              role: 'assistant',
+              content: `Ejecutando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}...`,
+              timestamp: new Date(),
+              isStreaming: true,
+              roundInfo: {
+                round: update.data.round,
+                status: 'executing' as const,
+                toolInfo: `Preparando ${update.data.toolCount} ${update.data.toolCount === 1 ? 'consulta' : 'consultas'}`
+              }
+            });
+          } else {
+            // No tools, round is complete, clear streaming message
+            setStreamingMessage(null);
+          }
         }
         break;
 
@@ -401,6 +446,7 @@ function App() {
         break;
 
       case 'round_completed':
+        // Just update the current streaming message to show "preparing next round"
         setStreamingMessage(prev => prev ? {
           ...prev,
           roundInfo: {
@@ -432,7 +478,7 @@ function App() {
         break;
 
       case 'analysis_complete': {
-        // Finalize the streaming message and add it to messages
+        // Add the final message
         const finalMessage: ChatMessage = {
           role: 'assistant',
           content: update.data.response,
@@ -486,6 +532,7 @@ function App() {
       <ProcessingMessage
         isProcessing={isProcessingViewer}
         isLargeFile={isLargeFile}
+        showViewerReady={showViewerReady}
       />
 
       {/* Main content area */}
@@ -495,6 +542,7 @@ function App() {
           viewerReady={viewerReady}
           urn={urn}
           dwgViewData={dwgViewData}
+          hasMessages={messages.length > 0 || streamingMessage !== null}
         >
           <div className="h-full flex flex-col">
             <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -532,8 +580,8 @@ function App() {
         </AppLayout>
       </div>
 
-      {/* Fixed Bottom Action Bar - only show if we have a saved board name */}
-      {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && savedBoardName && (
+      {/* Fixed Bottom Action Bar - only show on chat screen */}
+      {!isUploadPhase && dwgId && messages.length > 0 && savedBoardName && (
         <div className="flex-shrink-0 z-50">
           <ActionButtons
             onActionSelect={handleActionSelect}

@@ -8,6 +8,7 @@ interface AppLayoutProps {
   urn: string | null;
   dwgViewData: any;
   children: React.ReactNode;
+  hasMessages: boolean;
 }
 
 export const AppLayout: React.FC<AppLayoutProps> = ({
@@ -15,9 +16,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   viewerReady,
   urn,
   dwgViewData,
-  children
+  children,
+  hasMessages
 }) => {
-  const showViewer = appPhase === 'ready' && viewerReady && urn;
+  const showViewer = appPhase === 'ready' && viewerReady && urn && hasMessages;
 
   return (
     <div className="h-full flex">

@@ -344,13 +344,13 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
           </svg>
         </div>
         <h2 className="text-2xl font-semibold text-white mb-2">¡Bienvenido!</h2>
-        <p className="text-gray-400 mb-6">Tu archivo DWG está listo. ¿Qué análisis te gustaría realizar?</p>
+        {isAccepted ? <p className="text-gray-400 mb-6">Tu archivo DWG está listo. ¿Qué análisis te gustaría realizar?</p> : <p className="text-gray-400 mb-6">Si el tablero o panel que se encuentra en el dibujo tiene nombre, puedes especificar uno. Esto facilita el análisis, particularmente si el archivo tiene múltiples tableros.</p>}
         
         {!isAccepted ? (
           <div className="mb-6 space-y-4">
             <div>
               <label htmlFor="board-name" className="block text-sm font-medium text-gray-300 mb-2 text-left">
-                Especifica el tablero o panel <span className="text-red-400">*</span>
+                Nombre del tablero o panel
               </label>
               <input
                 id="board-name"
@@ -369,14 +369,31 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
             >
               Continuar con análisis
             </button>
+
+            <div className="mt-4 text-center">
+              <p className="text-sm text-gray-400 mb-2">¿El archivo tiene un solo tablero o no hay nombre?</p>
+              <button
+                onClick={() => {
+                  setBoardName("Tablero único del archivo");
+                  setIsAccepted(true);
+                  onBoardNameAccepted?.("Tablero único del archivo");
+                }}
+                disabled={isUploading}
+                className="text-blue-500 hover:text-white hover:underline text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Omitir
+              </button>
+            </div>
           </div>
         ) : (
           <>
-            <div className="mb-6 p-3 bg-green-900/30 border border-green-600 rounded-lg">
-              <p className="text-green-400 text-sm">
-                <strong>Tablero seleccionado:</strong> {boardName}
-              </p>
-            </div>
+            {boardName !== "Tablero único del archivo" && (
+              <div className="mb-6 p-3 bg-green-900/30 border border-green-600 rounded-lg">
+                <p className="text-green-400 text-sm">
+                  <strong>Tablero seleccionado:</strong> {boardName}
+                </p>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-3 text-sm">
               {actions.map((action) => (

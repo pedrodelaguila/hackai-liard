@@ -20,7 +20,7 @@ export const useTranslationPolling = (onComplete: () => void) => {
           console.error('Translation failed');
         } else {
           // Still processing, continue polling
-          setTimeout(checkStatus, 5000); // Poll every 5 seconds
+          setTimeout(checkStatus, 4000); // Poll every 4 seconds
         }
       } catch (error) {
         console.error('Error checking status:', error);
