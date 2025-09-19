@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
+// import cors from 'cors'; // Disabled - CORS handled by nginx
 import multer from 'multer';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -27,20 +27,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 4000;
 
-// CORS configuration for Vercel frontend
-const corsOptions = {
-  origin: [
-    'http://localhost:5173', // Vite dev server
-    /^https:\/\/.*\.vercel\.app$/, // Vercel deployments
-    /^https:\/\/.*\.vercel\.com$/, // Alternative Vercel domain
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-};
+// CORS handled by nginx - no need for backend CORS middleware
 
 // Middleware
-app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Add request size limit
 
 // Multer for file uploads
@@ -636,9 +625,6 @@ app.post('/chat/stream', upload.single('dwg'), async (req, res) => {
     // Set up Server-Sent Events
     res.writeHead(200, {
       'Content-Type': 'text/plain; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     });
