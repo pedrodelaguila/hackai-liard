@@ -312,7 +312,7 @@ function App() {
         // Remove any JSON objects that might have slipped through
         filteredText = filteredText.replace(/\{[\s\S]*?"type":\s*"[^"]*"[\s\S]*?\}/g, '');
 
-        // Check if this is budget/table content that should be preserved
+        // Check if this is budget/table content that should be filtered out in round responses
         const isBudgetContent = filteredText.includes('|') && (
           filteredText.includes('Categoría') ||
           filteredText.includes('Descripción') ||
@@ -322,50 +322,50 @@ function App() {
           filteredText.includes('TOTAL')
         );
 
-        // Filter technical errors and replace with user-friendly messages (but preserve budget content)
-        if (!isBudgetContent && (filteredText.toLowerCase().includes('error:') || filteredText.toLowerCase().includes('failed:') || filteredText.toLowerCase().includes('400') || filteredText.toLowerCase().includes('500'))) {
+        // Skip round responses that contain budget tables - they should only appear in final response
+        if (isBudgetContent) {
+          return; // Don't create a message bubble for intermediate budget content
+        }
+
+        // Filter technical errors and replace with user-friendly messages
+        if (filteredText.toLowerCase().includes('error:') || filteredText.toLowerCase().includes('failed:') || filteredText.toLowerCase().includes('400') || filteredText.toLowerCase().includes('500')) {
           filteredText = 'Ha ocurrido un error, intenta nuevamente.';
         } else {
-          // Only apply filtering if it's not budget content
-          if (!isBudgetContent) {
-            // Filter JQ queries and replace with user-friendly messages
-            const jqPatterns = [
-              { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
-              { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
-              { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
-              { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
-              { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
-              { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
-              { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
-              { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
-              { pattern: /\[\]$/gm, replacement: '' } // Remove empty array results
-            ];
+          // Filter JQ queries and replace with user-friendly messages
+          const jqPatterns = [
+            { pattern: /Query execution error[\s\S]*?jq:[\s\S]*?/gi, replacement: '' },
+            { pattern: /jq:[\s\S]*?error[\s\S]*?Cannot index[\s\S]*?/gi, replacement: '' },
+            { pattern: /Executing query:[\s\S]*?/gi, replacement: 'Buscando información en el dibujo...' },
+            { pattern: /Query:[\s\S]*?\./gi, replacement: 'Analizando componentes del tablero...' },
+            { pattern: /Query \d+\/\d+[\s\S]*?/gi, replacement: 'Consultando información...' },
+            { pattern: /Running query[\s\S]*?/gi, replacement: 'Consultando datos del DWG...' },
+            { pattern: /\$\.[\s\S]*?\[[\s\S]*?\][\s\S]*?/gi, replacement: 'Procesando información del tablero...' },
+            { pattern: /Consulta \d+ de \d+[\s\S]*?/gi, replacement: 'Analizando datos del archivo...' },
+            { pattern: /\[\]$/gm, replacement: '' } // Remove empty array results
+          ];
 
-            jqPatterns.forEach(({ pattern, replacement }) => {
-              filteredText = filteredText.replace(pattern, replacement);
-            });
-          }
+          jqPatterns.forEach(({ pattern, replacement }) => {
+            filteredText = filteredText.replace(pattern, replacement);
+          });
 
-          // Filter internal thinking messages (only if not budget content)
-          if (!isBudgetContent) {
-            const internalPatterns = [
-              /Simplificaré la consulta para evitar errores:?/gi,
-              /Ahora voy a buscar también elementos.*?:/gi,
-              /Ahora voy a analizar también las dimensiones.*?:/gi,
-              /Voy a realizar una búsqueda.*?:/gi,
-              /Let me.*?:/gi,
-              /I'll.*?:/gi,
-              /I will.*?:/gi,
-              /Ahora procederé a.*?:/gi,
-              /Procedemos a.*?:/gi,
-              /A continuación.*?:/gi,
-              /Primero.*?:/gi
-            ];
+          // Filter internal thinking messages
+          const internalPatterns = [
+            /Simplificaré la consulta para evitar errores:?/gi,
+            /Ahora voy a buscar también elementos.*?:/gi,
+            /Ahora voy a analizar también las dimensiones.*?:/gi,
+            /Voy a realizar una búsqueda.*?:/gi,
+            /Let me.*?:/gi,
+            /I'll.*?:/gi,
+            /I will.*?:/gi,
+            /Ahora procederé a.*?:/gi,
+            /Procedemos a.*?:/gi,
+            /A continuación.*?:/gi,
+            /Primero.*?:/gi
+          ];
 
-            internalPatterns.forEach(pattern => {
-              filteredText = filteredText.replace(pattern, '');
-            });
-          }
+          internalPatterns.forEach(pattern => {
+            filteredText = filteredText.replace(pattern, '');
+          });
         }
 
         // Clean up extra whitespace

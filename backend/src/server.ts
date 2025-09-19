@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-// import cors from 'cors'; // Disabled - CORS handled by nginx
+import cors from 'cors'; // Disabled - CORS handled by nginx
 import multer from 'multer';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -31,7 +31,7 @@ const port = process.env.PORT || 4000;
 
 // Middleware
 app.use(express.json({ limit: '10mb' })); // Add request size limit
-// app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(cors({ origin: 'http://localhost:5173' }));
 
 // Multer for file uploads
 const storage = multer.memoryStorage();
@@ -201,6 +201,131 @@ app.get('/api/aps/status/:urn', async (req, res) => {
   }
 });
 
+// Fix malformed budget tables where totals/notes appear inside table cells
+function fixBudgetTableFormat(content: string): string {
+  // Split content into lines for analysis
+  const lines = content.split('\n');
+  const fixedLines: string[] = [];
+  let inTable = false;
+  let tableComplete = false;
+  const extractedContent: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+    
+    // Detect table start
+    if (trimmedLine.includes('|') && (trimmedLine.includes('Categoría') || trimmedLine.includes('Descripción'))) {
+      inTable = true;
+      tableComplete = false;
+      fixedLines.push(line);
+      continue;
+    }
+    
+    // Detect table separator
+    if (inTable && trimmedLine.match(/^\|[\s\-\|]+\|$/)) {
+      fixedLines.push(line);
+      continue;
+    }
+    
+    // Handle table rows
+    if (inTable && !tableComplete) {
+      // Check if this is a material item row (has material category and pricing)
+      const isMaterialRow = trimmedLine.includes('|') && 
+                           (trimmedLine.includes('Térmicas') || 
+                            trimmedLine.includes('Diferenciales') || 
+                            trimmedLine.includes('Contactores') || 
+                            trimmedLine.includes('Cables') || 
+                            trimmedLine.includes('Protección') ||
+                            trimmedLine.includes('Seccionadores') ||
+                            trimmedLine.includes('Gabinetes') ||
+                            trimmedLine.includes('Conductores') ||
+                            trimmedLine.includes('Accesorios') ||
+                            trimmedLine.includes('Puesta a Tierra')) &&
+                           trimmedLine.includes('$');
+      
+      // Check if this line contains summary information that shouldn't be in the table
+      const containsSummaryInfo = trimmedLine.includes('TOTAL PROYECTO') ||
+                                 trimmedLine.includes('Subtotal Materiales') ||
+                                 trimmedLine.includes('Mano de Obra') ||
+                                 trimmedLine.includes('Nota:') ||
+                                 trimmedLine.includes('Precios estimados') ||
+                                 trimmedLine.includes('mercado argentino') ||
+                                 trimmedLine.includes('normas IRAM');
+      
+      if (isMaterialRow) {
+        // This is a valid material row
+        fixedLines.push(line);
+      } else if (containsSummaryInfo) {
+        // This is summary info that should be outside the table
+        tableComplete = true;
+        inTable = false;
+        
+        // Extract the summary content from the table cell
+        const cellContent = trimmedLine.replace(/^\|/, '').replace(/\|$/, '').trim();
+        if (cellContent) {
+          extractedContent.push(cellContent);
+        }
+      } else if (trimmedLine.includes('|') && trimmedLine.trim() !== '') {
+        // This might be a malformed row, extract its content
+        const cellContent = trimmedLine.replace(/^\|/, '').replace(/\|.*$/, '').trim();
+        if (cellContent && !cellContent.match(/^[\s\-\|]+$/)) {
+          extractedContent.push(cellContent);
+        }
+        
+        // Check if we should end the table here
+        if (!trimmedLine.match(/\|\s*[^|]*\s*\|\s*[^|]*\s*\|\s*[^|]*\s*\|\s*[^|]*\s*\|/)) {
+          tableComplete = true;
+          inTable = false;
+        }
+      } else if (trimmedLine === '') {
+        // Empty line might indicate end of table
+        if (fixedLines.length > 0 && fixedLines[fixedLines.length - 1].includes('|')) {
+          tableComplete = true;
+          inTable = false;
+          fixedLines.push(''); // Preserve the blank line
+        }
+      }
+    } else {
+      // We're outside the table or table is complete
+      if (tableComplete && extractedContent.length > 0) {
+        // Add extracted content as regular paragraphs
+        fixedLines.push(''); // Blank line after table
+        extractedContent.forEach(content => {
+          // Format as proper markdown depending on content type
+          if (content.includes('TOTAL PROYECTO') || content.includes('Subtotal') || content.includes('Mano de Obra')) {
+            fixedLines.push(`**${content}**`);
+          } else if (content.includes('Nota:') || content.includes('Precios estimados')) {
+            fixedLines.push(`**Nota**: ${content.replace(/^Nota:\s*/, '')}`);
+          } else {
+            fixedLines.push(content);
+          }
+        });
+        extractedContent.length = 0; // Clear extracted content
+        tableComplete = false; // Reset flag
+      }
+      
+      fixedLines.push(line);
+    }
+  }
+  
+  // Add any remaining extracted content
+  if (extractedContent.length > 0) {
+    fixedLines.push(''); // Blank line
+    extractedContent.forEach(content => {
+      if (content.includes('TOTAL PROYECTO') || content.includes('Subtotal') || content.includes('Mano de Obra')) {
+        fixedLines.push(`**${content}**`);
+      } else if (content.includes('Nota:') || content.includes('Precios estimados')) {
+        fixedLines.push(`**Nota**: ${content.replace(/^Nota:\s*/, '')}`);
+      } else {
+        fixedLines.push(content);
+      }
+    });
+  }
+  
+  return fixedLines.join('\n');
+}
+
 // Extract final result from Claude's full response
 function extractFinalResult(fullResponse: string): string {
   // Split into sections by double newlines
@@ -308,9 +433,29 @@ function extractFinalResult(fullResponse: string): string {
     .replace(/^\*\*Step \d+:.*$/gmi, '')
     .replace(/^Te ayudo a.*siguiendo.*$/gmi, '')
     .replace(/^Voy a proceder.*$/gmi, '')
-    .replace(/^Basándome en.*análisis.*$/gmi, '')
-    .replace(/\n\s*\n\s*\n/g, '\n\n')
-    .trim();
+    .replace(/^Basándome en.*análisis.*$/gmi, '');
+
+  // Preserve markdown table formatting - don't collapse newlines if we have tables
+  const hasMarkdownTable = result.includes('|') && (
+    result.includes('Categoría') ||
+    result.includes('Descripción') ||
+    result.includes('Cantidad') ||
+    result.includes('Precio') ||
+    result.includes('Subtotal')
+  );
+
+  if (hasMarkdownTable) {
+    // Fix malformed budget tables where totals/notes appear inside table cells
+    result = fixBudgetTableFormat(result);
+    
+    // For budget tables, only remove excessive blank lines but preserve table structure
+    result = result.replace(/\n\s*\n\s*\n\s*\n/g, '\n\n');
+  } else {
+    // For non-table content, apply normal cleanup
+    result = result.replace(/\n\s*\n\s*\n/g, '\n\n');
+  }
+  
+  result = result.trim();
   
   return result || fullResponse;
 }

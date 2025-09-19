@@ -44,10 +44,11 @@ function getBaseSystemPrompt(dwgId: string): string {
    - "Catalogando los elementos de protección encontrados..."
 
 5. **BUDGET RESPONSE FORMAT**: When creating budgets (presupuestos):
-   - In your intermediate responses, provide ONLY explanatory text like "Basándome en la lista de materiales extraída anteriormente para [board name], procedo a crear el presupuesto detallado."
-   - DO NOT include the full markdown table in intermediate responses
-   - Save the complete markdown table for your FINAL response only
-   - This prevents the user from seeing the same budget information twice
+   - CRITICAL: NEVER send any table, partial table, or budget information in intermediate responses
+   - In intermediate responses, provide ONLY brief explanatory text like "Preparando el presupuesto para [board name]..."
+   - DO NOT include ANY markdown table, pricing information, or budget data in intermediate responses
+   - Send the complete budget table ONLY in your FINAL response
+   - This completely eliminates duplicate budget information
 
 You can query this DWG using jq syntax to extract information. The DWG is parsed as JSON with the following structure:
 - entities: Array of drawing entities (lines, circles, text, etc.)
@@ -583,6 +584,8 @@ function getMandatoryRule(): string {
 9. **CLEAR SEPARATION**: If providing explanations, put them BEFORE the final JSON, clearly separated
 10. **MATERIALS LIST CONSISTENCY**: For materials requests, ALWAYS use the materials_list JSON format - NEVER bullet points or plain text
 11. **FIRST RESPONSE QUALITY**: The first response must be as well-formatted as subsequent responses - no exceptions
+12. **BUDGET TABLE FORMATTING**: For budget tables, ensure proper markdown syntax with each row on separate lines and summary text OUTSIDE the table, never inside cells
+13. **ABSOLUTE TABLE BOUNDARY RULE**: In budget tables, the word "Nota" and ANY text about pricing disclaimers MUST NEVER appear between | symbols. These MUST be formatted as regular text paragraphs AFTER the table ends.
 
 **IRAM STANDARDS COMPLIANCE REQUIREMENTS:**
 6. **IRAM COMPONENT VALIDATION**: Verify all identified components comply with IRAM standards:
@@ -656,10 +659,11 @@ When a user requests a "presupuesto" (budget) for materials, you MUST follow thi
 1. **CHECK CONVERSATION HISTORY FIRST**: Look through the conversation history for any previously extracted materials lists for the same board/tablero mentioned in the request.
 
 2. **REUSE EXISTING MATERIALS LIST**: If you find a materials list in the conversation history that matches the requested board:
-   - Use that existing list as the basis for the budget
+   - Use that existing list as the basis for the budget  
    - DO NOT re-extract materials from the DWG
    - Directly proceed to create pricing for those materials
    - Reference the previous extraction: "Basándome en la lista de materiales extraída anteriormente para [board name]..."
+   - CRITICAL: Do NOT send any partial or preliminary budget information during intermediate conversation rounds
 
 3. **EXTRACT NEW LIST ONLY IF NEEDED**: If no suitable materials list exists in the conversation history, then extract a new materials list first.
 
@@ -686,21 +690,101 @@ When a user requests a "presupuesto" (budget) for materials, you MUST follow thi
    - Add 15-20% for installation/labor
 
 **CRITICAL FORMATTING RULE FOR BUDGETS**: 
-- ALWAYS format budget responses using proper markdown table syntax
-- Start with a brief explanation, then present the markdown table
-- Example correct format:
+- NEVER send budget information in intermediate responses during conversation rounds
+- ONLY send the complete budget table in your FINAL response
+- ALWAYS format final budget responses using proper markdown table syntax
+- MANDATORY: Use proper line breaks and spacing for markdown tables
+- CRITICAL: Each table row must be on a separate line with proper | separators
+- CRITICAL: Summary text (Subtotal, Total, Nota) must appear OUTSIDE and AFTER the table, never inside table cells
+- NEVER put summary information or notes inside table cells
+- CRITICAL: Do NOT use newlines within table cells - each cell must be on the same row
+- MANDATORY: The last table row must end with | and then a new paragraph must start for totals
+- Example correct format (FINAL response only):
 
 Basándome en los materiales del tablero, aquí está el presupuesto detallado:
 
 | Categoría | Descripción | Cantidad | Precio Unit. (ARS) | Subtotal (ARS) |
 |-----------|-------------|----------|--------------------|--------------------|
 | Térmicas | TÉRMICA 2P25A 4.5KA C | 5 | $12,000 | $60,000 |
+| Diferenciales | DIFERENCIAL 2P40A 30mA | 2 | $25,000 | $50,000 |
+
+**CRITICAL**: The table MUST END with the last item row. Then add a blank line, then the summary information:
 
 **Subtotal Materiales**: $XXX,XXX  
 **Mano de Obra (18%)**: $XX,XXX  
 **TOTAL PROYECTO**: $XXX,XXX
 
-Always check conversation history before doing any DWG queries for budget requests.`;
+**Nota**: Precios estimados para el mercado argentino 2025, sujetos a variación según proveedor y condiciones comerciales. Todos los materiales especificados cumplen con normas IRAM/IEC vigentes.
+
+**MANDATORY TABLE TERMINATION RULES**:
+- The markdown table MUST end after the last item row
+- There MUST be a blank line between the table and the summary
+- Summary information (Subtotal, Mano de Obra, TOTAL, Nota) is NEVER part of the table
+- Do NOT add summary rows to the table itself
+- Do NOT use table syntax (|) for summary information
+- CRITICAL: Each table cell must be a single line of text with no line breaks inside
+- EXAMPLE OF WHAT NOT TO DO: | Category | Description
+  Total: $500
+  Note: text |
+- EXAMPLE OF WHAT TO DO: | Category | Description | (end table here)
+
+**Subtotal**: $500  
+**Note**: text
+
+**CRITICAL TABLE STRUCTURE ENFORCEMENT**:
+- NEVER include "Nota" or any note text as a table cell
+- NEVER include totals or subtotals as table rows
+- The table contains ONLY material items with their individual details
+- ALL summary information (totals, notes, disclaimers) goes OUTSIDE the table
+- If you see note text appearing in a table cell, you have made an error
+- The table ends with the last material item row - nothing else goes in the table
+- ABSOLUTE PROHIBITION: The word "Nota" or any note content CANNOT appear between | symbols
+- ABSOLUTE PROHIBITION: Text about "precios estimados", "mercado argentino", "IRAM" CANNOT be in table cells
+- MANDATORY: After the last material row, immediately close the table - no more rows allowed
+
+**CRITICAL ANTI-DUPLICATION RULES FOR BUDGETS:**
+- If you already see a properly formatted budget table in any previous conversation round, DO NOT create another one
+- If conversation history shows a budget was already provided for the requested board, simply refer to it: "El presupuesto para este tablero ya fue proporcionado anteriormente."
+- NEVER send the same budget information twice in different formats
+- Each budget request should result in EXACTLY ONE properly formatted table in the entire conversation
+
+Always check conversation history before doing any DWG queries for budget requests.
+
+**ULTRA-CRITICAL BUDGET TABLE FORMAT - FOLLOW EXACTLY**:
+
+When creating budget tables, you MUST generate the response in this EXACT format pattern:
+
+\`\`\`
+Basándome en la lista de materiales extraída anteriormente para el tablero TS1A/N, aquí está el presupuesto detallado:
+
+| Categoría | Descripción | Cantidad | Precio Unit. (ARS) | Subtotal (ARS) |
+|-----------|-------------|----------|--------------------|--------------------|
+| Térmicas | TÉRMICA 2P16A 4.5KA C (IRAM/IEC) | 10 | $12,500 | $125,000 |
+| Térmicas | TÉRMICA 2P25A 4.5KA C (IRAM/IEC) | 3 | $14,000 | $42,000 |
+
+**Subtotal Materiales**: $541,000  
+**Mano de Obra (18%)**: $97,380  
+**TOTAL PROYECTO**: $638,380
+
+**Nota**: Precios estimados para el mercado argentino 2025, sujetos a variación según proveedor y condiciones comerciales.
+\`\`\`
+
+**CRITICAL**: Notice how the table ends after the last material row. The totals and note are OUTSIDE the table as separate paragraphs.
+
+**CRITICAL**: The table ends with the last material row. Then there are blank lines, then totals as regular text (not table rows).
+
+**FINAL VERIFICATION RULE FOR TABLE FORMAT**:
+The markdown table structure MUST be:
+1. Header row: | Categoría | Descripción | Cantidad | Precio Unit. (ARS) | Subtotal (ARS) |
+2. Separator: |-----------|-------------|----------|--------------------|--------------------|
+3. Material rows ONLY: | Category | Description | Number | Price | Subtotal |
+4. TABLE ENDS HERE - no more | symbols after the last material
+5. Blank line
+6. Summary as regular text (no | symbols): **Subtotal Materiales**: $XXX
+7. **TOTAL PROYECTO**: $XXX  
+8. **Nota**: Text (no | symbols)
+
+NEVER format totals or notes with | symbols. They are NOT part of the table.`;
 }
 
 /**
