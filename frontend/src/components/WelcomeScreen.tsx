@@ -66,8 +66,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onActionSelect }) 
         <p className="text-gray-400 mb-6">Tu archivo DWG está listo. ¿Qué análisis te gustaría realizar?</p>
         
         <div className="mb-6">
+          <p className="text-gray-400 mb-2">Especifica el nombre del tablero o panel que se encuentra en el dibujo, si existe. Esto facilita el análisis.</p>
           <label htmlFor="board-name" className="block text-sm font-medium text-gray-300 mb-2 text-left">
-            Especifica el tablero o panel (opcional)
+            Nombre del tablero o panel
           </label>
           <input
             id="board-name"
