@@ -371,7 +371,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
             </button>
 
             <div className="mt-4 text-center">
-              <p className="text-sm text-gray-400 mb-2">¿El archivo tiene un solo tablero?</p>
+              <p className="text-sm text-gray-400 mb-2">¿El archivo tiene un solo tablero o no hay nombre?</p>
               <button
                 onClick={() => {
                   setBoardName("Tablero único del archivo");

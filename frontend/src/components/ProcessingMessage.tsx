@@ -3,6 +3,7 @@ import React from 'react';
 interface ProcessingMessageProps {
   isProcessing: boolean;
   isLargeFile: boolean;
+  showViewerReady: boolean;
 }
 
 // Subcomponent for processing state
@@ -40,13 +41,32 @@ const LargeFileNotification: React.FC = () => (
   </div>
 );
 
+// Subcomponent for viewer ready notification
+const ViewerReadyNotification: React.FC = () => (
+  <div className="flex items-center gap-3">
+    <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+    </svg>
+    <div className="text-sm">
+      <span className="text-green-300 font-medium">
+        ¡Visualización lista!
+      </span>
+      <br />
+      <span className="text-green-400/80">
+        Aparecerá junto a tu primera consulta
+      </span>
+    </div>
+  </div>
+);
+
 // Main component
 export const ProcessingMessage: React.FC<ProcessingMessageProps> = ({
   isProcessing,
-  isLargeFile
+  isLargeFile,
+  showViewerReady
 }) => {
   // Don't show anything if no relevant state is active
-  if (!isProcessing && !isLargeFile) {
+  if (!isProcessing && !isLargeFile && !showViewerReady) {
     return null;
   }
 
@@ -54,7 +74,8 @@ export const ProcessingMessage: React.FC<ProcessingMessageProps> = ({
     <div className="fixed top-24 left-0 right-0 z-30 flex justify-center pointer-events-none">
       <div className="bg-gray-800/90 border border-gray-600/50 rounded-lg px-4 py-3 mx-4 backdrop-blur-sm shadow-lg pointer-events-auto">
         {isProcessing && <ProcessingViewer />}
-        {isLargeFile && !isProcessing && <LargeFileNotification />}
+        {isLargeFile && !isProcessing && !showViewerReady && <LargeFileNotification />}
+        {showViewerReady && <ViewerReadyNotification />}
       </div>
     </div>
   );

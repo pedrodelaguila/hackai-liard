@@ -27,13 +27,18 @@ function App() {
   const [savedBoardName, setSavedBoardName] = useState<string>('');
   const [isProcessingViewer, setIsProcessingViewer] = useState<boolean>(false);
   const [isLargeFile, setIsLargeFile] = useState<boolean>(false);
+  const [showViewerReady, setShowViewerReady] = useState<boolean>(false);
   const [fileCharacteristics, setFileCharacteristics] = useState<{isLarge: boolean, hasUrn: boolean}>({isLarge: false, hasUrn: false});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { appPhase, viewerReady, moveToProcessing, moveToReady, isUploadPhase, isProcessingPhase } = useAppPhases();
   const handleViewerReady = useCallback(() => {
     setIsProcessingViewer(false);
+    setShowViewerReady(true);
     moveToReady();
+
+    // Hide the success message after 4 seconds
+    setTimeout(() => setShowViewerReady(false), 4000);
   }, [moveToReady]);
 
   const { pollTranslationStatus } = useTranslationPolling(handleViewerReady);
@@ -527,6 +532,7 @@ function App() {
       <ProcessingMessage
         isProcessing={isProcessingViewer}
         isLargeFile={isLargeFile}
+        showViewerReady={showViewerReady}
       />
 
       {/* Main content area */}
@@ -536,6 +542,7 @@ function App() {
           viewerReady={viewerReady}
           urn={urn}
           dwgViewData={dwgViewData}
+          hasMessages={messages.length > 0 || streamingMessage !== null}
         >
           <div className="h-full flex flex-col">
             <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -573,8 +580,8 @@ function App() {
         </AppLayout>
       </div>
 
-      {/* Fixed Bottom Action Bar - only show if we have a saved board name */}
-      {!isUploadPhase && dwgId && !(isProcessingPhase && messages.length === 0) && savedBoardName && (
+      {/* Fixed Bottom Action Bar - only show on chat screen */}
+      {!isUploadPhase && dwgId && messages.length > 0 && savedBoardName && (
         <div className="flex-shrink-0 z-50">
           <ActionButtons
             onActionSelect={handleActionSelect}
