@@ -13,7 +13,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ dwgId, sessionId }) => {
           <img src="/liard_logo_png.png" alt="Ícono CAD" className="h-20 w-auto shadow-md rounded-lg" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold text-white">Asistente de Análisis DWG</h1>
+          <h1 className="text-xl font-semibold text-white">Planytics</h1>
           <p className="text-sm text-gray-400">Análisis de archivos CAD con IA</p>
         </div>
       </div>
