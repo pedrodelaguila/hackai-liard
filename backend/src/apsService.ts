@@ -7,15 +7,17 @@ import fetch from 'node-fetch';
 const APS_CLIENT_ID = process.env.APS_CLIENT_ID;
 const APS_CLIENT_SECRET = process.env.APS_CLIENT_SECRET;
 const APS_BUCKET_KEY = process.env.APS_BUCKET_KEY;
+const hasApsConfig = Boolean(APS_CLIENT_ID && APS_CLIENT_SECRET && APS_BUCKET_KEY);
 
-if (!APS_CLIENT_ID || !APS_CLIENT_SECRET || !APS_BUCKET_KEY) {
-  console.error('Missing required APS environment variables (APS_CLIENT_ID, APS_CLIENT_SECRET, APS_BUCKET_KEY)');
-  process.exit(1);
+if (!hasApsConfig) {
+  console.warn('APS environment variables are missing; Autodesk viewer features are disabled.');
 }
 
 // Create the Auth Client with auto-refresh enabled
 // Scopes: bucket operations, data operations, and model derivative (translation)
-const auth = new forge.AuthClientTwoLegged(APS_CLIENT_ID, APS_CLIENT_SECRET, ['bucket:create', 'bucket:read', 'data:write', 'data:read', 'code:all'], true);
+const auth = hasApsConfig
+  ? new forge.AuthClientTwoLegged(APS_CLIENT_ID!, APS_CLIENT_SECRET!, ['bucket:create', 'bucket:read', 'data:write', 'data:read', 'code:all'], true)
+  : null;
 
 // Get the default API client instance
 const defaultClient = forge.ApiClient.instance;
@@ -25,10 +27,17 @@ const bucketsApi = new forge.BucketsApi();
 const objectsApi = new forge.ObjectsApi();
 const derivativesApi = new forge.DerivativesApi();
 
+function assertApsConfigured() {
+  if (!hasApsConfig || !auth) {
+    throw new Error('APS is not configured. Set APS_CLIENT_ID, APS_CLIENT_SECRET, and APS_BUCKET_KEY to enable Autodesk viewer features.');
+  }
+}
+
 /**
  * Gets a 2-legged authentication token from APS and configures the default client.
  */
 export async function getAuthToken() {
+  assertApsConfigured();
   const credentials = await auth.authenticate();
   
   // Set the Authorization header on the default client for all subsequent requests
@@ -44,6 +53,7 @@ export async function getAuthToken() {
  * @returns The translation manifest with status information.
  */
 export async function getTranslationStatus(urn: string) {
+  assertApsConfigured();
   await getAuthToken(); // Ensure we have fresh authentication
   return derivativesApi.getManifest(urn);
 }
@@ -53,6 +63,7 @@ export async function getTranslationStatus(urn: string) {
  * Creates it if it doesn't.
  */
 async function ensureBucketExists() {
+  assertApsConfigured();
   // Ensure we have fresh authentication
   await getAuthToken();
   
